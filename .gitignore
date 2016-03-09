@@ -1,2 +1,5 @@
 */build/*
+trainingQ/
+testQ/
 .DS_Store
+*/.DS_Store

@@ -14,6 +14,7 @@
 #include "opencv2/core/utility.hpp"
 
 #include <stdio.h>
+#include "imageLib.h"
 
 using namespace cv;
 
@@ -41,53 +42,61 @@ static void saveXYZ(const char* filename, const Mat& mat)
     fclose(fp);
 }
 
-// check whether machine is little endian
-int littleendian()
-{
-    int intval = 1;
-    unsigned char *uval = (unsigned char *)&intval;
-    return uval[0] == 1;
-}
-
-// write pfm image (added by DS 10/24/2013)
-// 1-band PFM image, see http://netpbm.sourceforge.net/doc/pfm.html
-void WriteFilePFM(float *data, int width, int height, const char* filename, float scalefactor=1/255.0)
-{
-    // Open the file
-    FILE *stream = fopen(filename, "wb");
-    if (stream == 0) {
-        fprintf(stderr, "WriteFilePFM: could not open %s\n", filename);
-	exit(1);
-    }
-
-    // sign of scalefact indicates endianness, see pfms specs
-    if (littleendian())
-	scalefactor = -scalefactor;
-
-    // write the header: 3 lines: Pf, dimensions, scale factor (negative val == little endian)
-    fprintf(stream, "Pf\n%d %d\n%f\n", width, height, scalefactor);
-
-    int n = width;
-    // write rows -- pfm stores rows in inverse order!
-    for (int y = height-1; y >= 0; y--) {
-	float* ptr = data + y * width;
-	// change invalid pixels (which seem to be represented as -10) to INF
-	for (int x = 0; x < width; x++) {
-	    if (ptr[x] < 0)
-		ptr[x] = INFINITY;
-        if (ptr[x] > 1/abs(scalefactor)) {
-            ptr[x] = 1/abs(scalefactor);
+CFloatImage ConvertMatToCImage(Mat mat) {
+    CFloatImage img(mat.cols, mat.rows, 1);
+    for (int x = 0; x < mat.cols; x++) {
+        for (int y = 0; y < mat.rows; y++) {
+            float* ptr = (float *) img.PixelAddress(x, y, 0);
+            *ptr = mat.at<float>(y, x)/16;
+            if (*ptr < 0)
+                *ptr = INFINITY;
         }
-	}
-	if ((int)fwrite(ptr, sizeof(float), n, stream) != n) {
-	    fprintf(stderr, "WriteFilePFM: problem writing data\n");
-	    exit(1);
-	}
     }
-
-    // close file
-    fclose(stream);
+    return img;
 }
+
+// // write pfm image (added by DS 10/24/2013)
+// // 1-band PFM image, see http://netpbm.sourceforge.net/doc/pfm.html
+// void WriteFilePFM(float *data, int width, int height, const char* filename, float scalefactor=1/255.0)
+// {
+//     // Open the file
+//     FILE *stream = fopen(filename, "wb");
+//     if (stream == 0) {
+//         fprintf(stderr, "WriteFilePFM: could not open %s\n", filename);
+// 	exit(1);
+//     }
+//
+//     // sign of scalefact indicates endianness, see pfms specs
+//     if (littleendian())
+// 	scalefactor = -scalefactor;
+//
+//     // write the header: 3 lines: Pf, dimensions, scale factor (negative val == little endian)
+//     fprintf(stream, "Pf\n%d %d\n%f\n", width, height, scalefactor);
+//
+//     int n = width;
+//     // write rows -- pfm stores rows in inverse order!
+//     for (int y = height-1; y >= 0; y--) {
+// 	float* ptr = data + y * width;
+// 	// change invalid pixels (which seem to be represented as -10) to INF
+// 	for (int x = 0; x < width; x++) {
+// 	    if (ptr[x] < 0)
+// 		ptr[x] = INFINITY;
+//         if (ptr[x] > 1/abs(scalefactor)) {
+//             ptr[x] = 1/abs(scalefactor);
+//         }
+// 	}
+// 	if ((int)fwrite(ptr, sizeof(float), n, stream) != n) {
+// 	    fprintf(stderr, "WriteFilePFM: problem writing data\n");
+// 	    exit(1);
+// 	}
+//     }
+//     // close file
+//     fclose(stream);
+//
+//     CFloatImage img;
+//     int verbose = 0;
+//     ReadImageVerb(img, filename, verbose);
+// }
 
 int main(int argc, char** argv)
 {
@@ -317,14 +326,55 @@ int main(int argc, char** argv)
     printf("Time elapsed: %fms\n", t*1000/getTickFrequency());
 
     disp.convertTo(disp, DataType<float>::type);
-    WriteFilePFM((float*)disp.data, disp.cols, disp.rows, disparity_filename, 1.0f/(numberOfDisparities-1));
-    if( alg != STEREO_VAR )
-        disp.convertTo(disp8, CV_8U, 255/(numberOfDisparities*16.));
-    else
-        disp.convertTo(disp8, CV_8U);
-    imwrite("temp.png", disp8);
+    WriteFilePFM(ConvertMatToCImage(disp), disparity_filename, 1.0f/(numberOfDisparities-1));
+    // if( alg != STEREO_VAR )
+    //     disp.convertTo(disp8, CV_8U, 255/(numberOfDisparities*16.));
+    // else
+    //     disp.convertTo(disp8, CV_8U);
+    // imwrite("temp.png", disp8);
 
-
+    // CFloatImage gtdisp;
+    // int verbose;
+    // ReadImageVerb(gtdisp, "trainingQ/Vintage/disp0GT.pfm", verbose);
+    // CByteImage mask;
+    // ReadImageVerb(mask, "trainingQ/Vintage/mask0nocc.png", verbose);
+    //
+    // int width = gtdisp.Shape().width, height = gtdisp.Shape().height;
+    // int n = 0;
+    // int bad = 0;
+    // int invalid = 0;
+    // float serr = 0;
+    // int badthresh = 10;
+    // for (int y = 0; y < height; y++) {
+    // for (int x = 0; x < width; x++) {
+    //     float gt = gtdisp.Pixel(x, y, 0);
+    //     if (gt == INFINITY) // unknown
+    //     continue;
+    //     float d = disp.at<float>(y, x);
+    //     int valid = (d >=0 );
+    //     d = round(d/16);
+    //     float err = fabs(d - gt);
+    //     if (mask.Pixel(x, y, 0) != 255) { // don't evaluate pixel
+    //     } else {
+    //     n++;
+    //     if (valid) {
+    //         serr += err;
+    //         if (err > badthresh) {
+    //         bad++;
+    //         }
+    //     } else {// invalid (i.e. hole in sparse disp map)
+    //         invalid++;
+    //     }
+    //     }
+    // }
+    // }
+    // float badpercent =  100.0*bad/n;
+    // float invalidpercent =  100.0*invalid/n;
+    // float totalbadpercent =  100.0*(bad+invalid)/n;
+    // float avgErr = serr / (n - invalid); // CHANGED 10/14/2014 -- was: serr / n
+    // //printf("mask  bad%.1f  invalid  totbad   avgErr\n", badthresh);
+    // printf("%4.1f  %6.2f  %6.2f   %6.2f  %6.2f\n",   100.0*n/(width * height),
+	//    badpercent, invalidpercent, totalbadpercent, avgErr);
 
     if(point_cloud_filename)
     {
