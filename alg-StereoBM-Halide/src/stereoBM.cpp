@@ -46,12 +46,23 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 
     Var x("x"), y("y"), c("c"), d("d");
     Func diff("diff");
-    diff(x, y, d) = abs(left(x, y, 0) - right(x-d, y, 0)) + abs(left(x, y, 1) - right(x-d, y, 1)) + abs(left(x, y, 2) - right(x-d, y, 2));
+    diff(x, y, d) = select(x>=xmin && x<=xmax && y>=ymin && y<=ymax,
+        cast<int>(abs(left(x, y, 0) - right(x-d, y, 0)) + abs(left(x, y, 1) - right(x-d, y, 1)) + abs(left(x, y, 2) - right(x-d, y, 2))),
+        0);
 
     Func cSAD("cSAD"), vsum("vsum");
-    RDom r(-SADWindowSize/2, SADWindowSize);
-    vsum(x, y, d) = sum(cast<int>(diff(x + r, y, d)));
-    cSAD(x, y, d) = sum(vsum(x, y + r, d));
+    int win2 = SADWindowSize/2;
+    RDom r(-win2, SADWindowSize);
+    RDom rx(xmin-win2, xmax - xmin + 1);
+    RDom ry(ymin-win2, ymax - ymin + 1 + win2);
+    // vsum(x, y, d) = sum(diff(x, y+r, d));
+    vsum(x, y, d) = 0;
+    vsum(x, ry, d) = select(ry <= win2, vsum(x, ry-1, d) + diff(x, ry+win2, d),
+                                        vsum(x, ry-1, d) + diff(x, ry+win2, d) - diff(x, ry-win2, d));
+
+    cSAD(x, y, d) = 0;
+    cSAD(rx, y, d) = select(rx <= win2, cSAD(rx-1, y, d) + vsum(rx+win2, y, d),
+                                        cSAD(rx-1, y, d) + vsum(rx+win2, y, d) - vsum(rx-win2, y, d));
 
     RDom rd(minDisparity, numDisparities);
     Func disp_left("disp_left");
@@ -70,8 +81,8 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     // validate disparity by comparing left and right
     // calculate disp2
     Func disp_right("disp_right");
+    rx = RDom(xmin, xmax - xmin + 1);
     disp_right(x, y) = {minDisparity, INT_MAX};
-    RDom rx(xmin, xmax-xmin+1);
     Expr x2 = clamp(rx - disp_left(rx, y)[0], xmin, xmax);
     disp_right(x2, y) = tuple_select(
                              disp_right(x2, y)[1] > disp_left(rx, y)[1],
@@ -83,7 +94,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     x2 = clamp(x - disp_left(x, y)[0], xmin, xmax);
     disp(x, y) = select(
                     unique(x, y) == 0
-                    // || !(x >= xmin && x <= xmax && y >= ymin && y<= ymax)
+                    || !(x >= xmin && x <= xmax && y >= ymin && y<= ymax)
                     || (x2 >= xmin && x2 <= xmax && abs(disp_right(x2, y)[0] - disp_left(x, y)[0]) > disp12MaxDiff),
                     FILTERED,
                     disp_left(x,y)[0]
@@ -92,15 +103,16 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 
     // Schedule
     // Var xi("xi"), yi("yi"), xo("xo"), yo("yo");
-    // disp.compute_root().split(y, yo, yi, 16).parallel(yo);
+    // disp.compute_root().split(y, yo, yi, 64).parallel(yo);
     // unique.compute_inline();
     // disp_right.compute_at(disp, yi).vectorize(x, 16);
     // disp_left.compute_at(disp, yi).vectorize(x, 16);
     //
-    // cSAD.compute_at(disp, yo).vectorize(x, 16).reorder(x, d, y);
-    // vsum.compute_at(cSAD, y).vectorize(d, 16).reorder(x, d, y);
+    // cSAD.compute_at(disp, yi).vectorize(d, 16).reorder(d, x, y);
+    // cSAD.reorder_storage(d, x, y);
+    // vsum.compute_at(disp, yo).vectorize(d, 16).reorder(d, x, y);
     // vsum.reorder_storage(d, x, y);
-    // diff.compute_at(cSAD, y).vectorize(d, 16).reorder(d, x, y);
+    // diff.compute_root().vectorize(x, 16).reorder(x, d, y).parallel(y);
     // diff.reorder_storage(d, x, y);
     return disp;
 }
@@ -131,7 +143,7 @@ Func stereoMatch(Image<int8_t> left_image, Image<int8_t> right_image, int SADWin
 
     disp.compute_root();
     apply_default_schedule(disp);
-    //
+
     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
     disp.realize(width, height, t);
     disp.compile_to_lowered_stmt("disp.html", {}, HTML);
