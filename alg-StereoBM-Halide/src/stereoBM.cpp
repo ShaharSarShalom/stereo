@@ -46,7 +46,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 
     Var x("x"), y("y"), c("c"), d("d");
     Func diff("diff");
-    diff(x, y, d) = select(x>=xmin && x<=xmax && y>=ymin && y<=ymax,
+    diff(d, x, y) = select(x>=xmin && x<=xmax && y>=ymin && y<=ymax,
         cast<int>(abs(left(x, y, 0) - right(x-d, y, 0)) + abs(left(x, y, 1) - right(x-d, y, 1)) + abs(left(x, y, 2) - right(x-d, y, 2))),
         0);
 
@@ -55,28 +55,28 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     RDom r(-win2, SADWindowSize);
     RDom rx(xmin-win2, xmax - xmin + 1);
     RDom ry(ymin-win2, ymax - ymin + 1 + win2);
-    // vsum(x, y, d) = sum(diff(x, y+r, d));
-    vsum(x, y, d) = 0;
-    vsum(x, ry, d) = select(ry <= win2, vsum(x, ry-1, d) + diff(x, ry+win2, d),
-                                        vsum(x, ry-1, d) + diff(x, ry+win2, d) - diff(x, ry-win2, d));
+    // vsum(d, x, y) = sum(diff(x, y+r, d));
+    vsum(d, x, y) = 0;
+    vsum(d, x, ry) = select(ry <= win2, vsum(d, x, ry-1) + diff(d, x, ry+win2),
+                                        vsum(d, x, ry-1) + diff(d, x, ry+win2) - diff(d, x, ry-win2));
 
-    cSAD(x, y, d) = 0;
-    cSAD(rx, y, d) = select(rx <= win2, cSAD(rx-1, y, d) + vsum(rx+win2, y, d),
-                                        cSAD(rx-1, y, d) + vsum(rx+win2, y, d) - vsum(rx-win2, y, d));
+    cSAD(d, x, y) = 0;
+    cSAD(d, rx, y) = select(rx <= win2, cSAD(d, rx-1, y) + vsum(d, rx+win2, y),
+                                        cSAD(d, rx-1, y) + vsum(d, rx+win2, y) - vsum(d, rx-win2, y));
 
     RDom rd(minDisparity, numDisparities);
     Func disp_left("disp_left");
     disp_left(x, y) = {minDisparity, INT_MAX};
     disp_left(x, y) = tuple_select(
-                             cSAD(x, y, rd) < disp_left(x, y)[1],
-                             {rd, cSAD(x, y, rd)},
+                             cSAD(rd, x, y) < disp_left(x, y)[1],
+                             {rd, cSAD(rd, x, y)},
                              disp_left(x, y)
                              );
 
     // check unique match
     Func unique("unique");
     unique(x, y) = 1;
-    unique(x, y) = select(rd != disp_left(x, y)[0] && cSAD(x, y, rd) <= disp_left(x, y)[1] * (1 + uniquenessRatio), 0, 1);
+    unique(x, y) = select(rd != disp_left(x, y)[0] && cSAD(rd, x, y) <= disp_left(x, y)[1] * (1 + uniquenessRatio), 0, 1);
 
     // validate disparity by comparing left and right
     // calculate disp2
