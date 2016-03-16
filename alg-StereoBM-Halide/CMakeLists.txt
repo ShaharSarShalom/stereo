@@ -11,6 +11,10 @@ include_directories("${CMAKE_SOURCE_DIR}/include")
 find_package(PNG REQUIRED)
 include_directories(${PNG_INCLUDE_DIR})
 
+SET(IMAGE_LIB "~/MiddEval3/code/imageLib")
+link_directories( ${IMAGE_LIB} )
+include_directories( ${IMAGE_LIB} )
+
 # include directory
 include_directories(src)
 
@@ -22,4 +26,4 @@ set(CMAKE_BUILD_TYPE Release)
 
 # build demo program
 add_executable(stereoBM_halide ${SRC_FILES})
-target_link_libraries( stereoBM_halide ${PNG_LIBRARY} "${HALIDE_DIR}/bin/libHalide.so" )
+target_link_libraries( stereoBM_halide ${PNG_LIBRARY} "Img.i386-g" ${HALIDE_DIR}/bin/libHalide.so )
