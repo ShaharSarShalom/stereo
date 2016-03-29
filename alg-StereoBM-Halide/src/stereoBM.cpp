@@ -6,22 +6,6 @@ using namespace Halide;
 
 int FILTERED = -16;
 
-void apply_default_schedule(Func F) {
-    std::map<std::string,Internal::Function> flist = Internal::find_transitive_calls(F.function());
-    flist.insert(std::make_pair(F.name(), F.function()));
-    std::map<std::string,Internal::Function>::iterator fit;
-    for (fit=flist.begin(); fit!=flist.end(); fit++) {
-        // Func f(fit->second);
-        Internal::Function f = fit->second;
-        // Func wrapper(f);
-        // wrapper.compute_root();
-        if (f.schedule().compute_level().is_inline()){
-            std::cout << "Warning: applying inline schedule to " << f.name() << std::endl;
-        }
-    }
-    std::cout << std::endl;
-}
-
 Func prefilterXSobel(Func image, int w, int h) {
     Var x("x"), y("y");
     Func clamped("clamped"), gray("gray");
@@ -61,7 +45,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     Func diff_T("diff_T");
 
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-    diff_T(d, xi, yi, xo, yo) = diff(d, xi+xo*x_tile_size, yi+yo*y_tile_size);
+    diff_T(d, xi, yi, xo, yo) = diff(d, xi+xo*x_tile_size+xmin, yi+yo*y_tile_size+ymin);
 
     Func cSAD("cSAD");
     cSAD(d, xi, yi, xo, yo) = {0, 0};
@@ -111,21 +95,27 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     //                 disp_left(x,y)[0]
     //              );
 
-    disp(x, y) = select(
-                    !(x >= xmin && x <= xmax && y >= ymin && y<= ymax),
+    disp(x, y) = FILTERED;
+    int num_x_tiles = (xmax-xmin) / x_tile_size, num_y_tiles = (ymax-ymin) / y_tile_size;
+    RDom rr(0, x_tile_size, 0, y_tile_size, 0, num_x_tiles, 0, num_y_tiles);
+    Expr rx = rr[0] + rr[2] * x_tile_size + xmin;
+    Expr ry = rr[1] + rr[3] * y_tile_size + ymin;
+
+    disp(rx, ry) = select(
+                    rx > xmax || ry >= ymax,
                     FILTERED,
-                    disp_left(x%x_tile_size, y%y_tile_size, x/x_tile_size, y/y_tile_size)[0]
+                    disp_left(rr[0], rr[1], rr[2], rr[3])[0]
                  );
 
     // Schedule
     disp.compute_root();
-    disp.tile(x, y, xo, yo, xi, yi, x_tile_size, y_tile_size);
+    // disp.update().parallel(rr[3]).allow_race_conditions();
     // unique.compute_inline();
     // disp_right.compute_at(disp, y).vectorize(x, 16);
-    disp_left.compute_root().vectorize(xi, 16).parallel(yo);
-    disp_left.update().parallel(yo);
+    // disp_left.compute_root().vectorize(xi, 16).parallel(yo);
+    // disp_left.update().parallel(yo);
 
-    cSAD.compute_at(disp_left, xo).vectorize(d, 16);
+    cSAD.compute_at(disp, rr[2]).vectorize(d, 16);
     cSAD.update().reorder(d, rxi, ryi, xo, yo).vectorize(d, 16);
     return disp;
 }
@@ -147,11 +137,6 @@ Func stereoBM(Image<int8_t> left_image, Image<int8_t> right_image, int SADWindow
     Func disp = findStereoCorrespondence(filteredLeft, filteredRight, SADWindowSize, minDisparity, numDisparities,
         left_image.width(), left_image.height());
 
-    disp.compute_root();
-    apply_default_schedule(disp);
-
     disp.compile_to_lowered_stmt("disp.html", {}, HTML);
-    // Image<int> filtered = filteredLeft.realize(width, height, 3);
-    // Halide::Tools::save_image(filtered, "filteredLeft.png");
     return disp;
 }

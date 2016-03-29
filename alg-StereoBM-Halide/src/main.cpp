@@ -17,7 +17,7 @@ float profile(Func myFunc, int w, int h) {
     myFunc.compile_jit();
 
     unsigned long s = millisecond_timer();
-    int N_TIMES = 1;
+    int N_TIMES = 5;
     for (int i=0; i<N_TIMES; i++) {
         myFunc.realize(w,h);
     }
