@@ -51,51 +51,18 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     RDom r(-win2, x_tile_size + win2, -win2, y_tile_size + win2, "r");
     RVar rxi = r.x, ryi = r.y;
     Expr new_vsum = cSAD(d, rxi, ryi-1, xo, yo)[0] + diff_T(d, rxi+win2, ryi+win2, xo, yo) - select(ryi <= win2, 0, diff_T(d, rxi+win2, ryi-win2-1, xo, yo));
-    Expr new_sum = cSAD(d, rxi-1, ryi, xo, yo)[1] + new_vsum - select(rxi <= win2, 0, cSAD(d, rxi-SADWindowSize, ryi, xo, yo)[0]);
+    Expr new_sum  = cSAD(d, rxi-1, ryi, xo, yo)[1] + new_vsum - select(rxi <= win2, 0, cSAD(d, rxi-SADWindowSize, ryi, xo, yo)[0]);
     cSAD(d, rxi, ryi, xo, yo) = {new_vsum, new_sum};
 
-    int vec_size = 16, num_vecs = numDisparities/vec_size;
-    RDom k(0, num_vecs, "k"); Var j("j");
-    Func disp_left("disp_left"), vec_disp_left("vec_disp_left");
-    vec_disp_left(j, xi, yi, xo, yo) = {(ushort)minDisparity, (ushort)((2<<16)-1)};
-    Expr rd = k * vec_size + j + minDisparity;
-    vec_disp_left(j, xi, yi, xo, yo) = tuple_select(
-                            cSAD(rd, xi, yi, xo, yo)[1] < vec_disp_left(j, xi, yi, xo, yo)[1],
-                            {rd, cSAD(rd, xi, yi, xo, yo)[1]},
-                            vec_disp_left(j, xi, yi, xo, yo));
-    disp_left(xi, yi, xo, yo) = {(ushort)minDisparity, (ushort)((2>>16)-1)};
-    RDom rj(0, vec_size, "rj");
+    RDom rd(minDisparity, numDisparities);
+    Func disp_left("disp_left");
+    disp_left(xi, yi, xo, yo) = {minDisparity, (ushort)((2<<16)-1)};
     disp_left(xi, yi, xo, yo) = tuple_select(
-                            vec_disp_left(rj, xi, yi, xo, yo)[1] < disp_left(xi, yi, xo, yo)[1],
-                            vec_disp_left(rj, xi, yi, xo, yo),
-                            disp_left(xi, yi, xo, yo));
-    // check unique match
-    // Func unique("unique");
-    // unique(x, y) = 1;
-    // unique(x, y) = select(rd != disp_left(x, y)[0] && cSAD(rd, x, y)[1] <= disp_left(x, y)[1] * (1 + uniquenessRatio), 0, 1);
-
-    // validate disparity by comparing left and right
-    // calculate disp2
-    // Func disp_right("disp_right");
-    // RDom rx1 = RDom(xmin, xmax - xmin + 1);
-    // disp_right(x, y) = {minDisparity, INT_MAX};
-    // Expr x2 = clamp(rx1 - disp_left(rx1, y)[0], xmin, xmax);
-    // disp_right(x2, y) = tuple_select(
-    //                          disp_right(x2, y)[1] > disp_left(rx1, y)[1],
-    //                          disp_left(rx1, y),
-    //                          disp_right(x2, y)
-    //                      );
+            cSAD(rd, xi, yi, xo, yo)[1] < disp_left(xi, yi, xo, yo)[1],
+            {rd, cSAD(rd, xi, yi, xo, yo)[1]},
+            disp_left(xi, yi, xo, yo));
 
     Func disp("disp");
-    // Expr x2 = clamp(x - disp_left(xi, yi)[0], xmin, xmax);
-    // disp(x, y) = select(
-    //                 unique(x, y) == 0
-    //                 || !(x >= xmin && x <= xmax && y >= ymin && y<= ymax)
-    //                 || (x2 >= xmin && x2 <= xmax && abs(disp_right(x2, y)[0] - disp_left(x, y)[0]) > disp12MaxDiff),
-    //                 FILTERED,
-    //                 disp_left(x,y)[0]
-    //              );
-
     disp(x, y) = FILTERED;
     int num_x_tiles = (xmax-xmin) / x_tile_size, num_y_tiles = (ymax-ymin) / y_tile_size;
     RDom rr(0, x_tile_size, 0, y_tile_size, 0, num_x_tiles, 0, num_y_tiles);
@@ -108,14 +75,16 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
                     disp_left(rr[0], rr[1], rr[2], rr[3])[0]
                  );
 
-    // Schedule
-    disp.compute_root();
-    disp_left.update().unroll(rj);
-    vec_disp_left.compute_at(disp_left, xi)
-                 .update().vectorize(j);
+    int vector_width = 16;
 
-    cSAD.compute_at(disp, rr[2]);
-    cSAD.update().reorder(d, rxi, ryi, xo, yo).vectorize(d, 8);
+    // Schedule
+    disp.compute_root().vectorize(x,vector_width);
+
+    disp_left.compute_at(disp, rr[2]).reorder(xi, yi, xo, yo).vectorize(xi, vector_width)
+             .update().reorder(rd, xi, yi, xo, yo).vectorize(xi, vector_width).unroll(rd);
+
+    cSAD.compute_at(disp, rr[2]).reorder(d, xi,  yi,  xo, yo).vectorize(d, vector_width)
+        .update()               .reorder(d, rxi, ryi, xo, yo).vectorize(d, vector_width);
     return disp;
 }
 
