@@ -3,7 +3,7 @@
 #include "stereo.h"
 #include "Halide.h"
 #include "halide_image_io.h"
-#include "imageLib.h"
+// #include "imageLib.h"
 
 using namespace Halide;
 
@@ -30,19 +30,19 @@ float profile(Func myFunc, int w, int h) {
     return total_time/N_TIMES;
 }
 
-template <class T>
-CFloatImage convertHalideImageToFloatImage(Image<T> image) {
-    CFloatImage img(image.width(), image.height(), 1);
-    for (int x = 0; x < image.width(); x++) {
-        for (int y = 0; y < image.height(); y++) {
-            float* ptr = (float *) img.PixelAddress(x, y, 0);
-            *ptr = (float)image(x,y);
-            if (*ptr < 0)
-                *ptr = INFINITY;
-        }
-    }
-    return img;
-}
+// template <class T>
+// CFloatImage convertHalideImageToFloatImage(Image<T> image) {
+//     CFloatImage img(image.width(), image.height(), 1);
+//     for (int x = 0; x < image.width(); x++) {
+//         for (int y = 0; y < image.height(); y++) {
+//             float* ptr = (float *) img.PixelAddress(x, y, 0);
+//             *ptr = (float)image(x,y);
+//             if (*ptr < 0)
+//                 *ptr = INFINITY;
+//         }
+//     }
+//     return img;
+// }
 
 static void print_help()
 {
@@ -146,7 +146,7 @@ int main(int argc, char **argv) {
     Image<float> scaled_disp(disp_image.width(), disp_image.height());
     for (int y = 0; y < disp_image.height(); y++) {
         for (int x = 0; x < disp_image.width(); x++) {
-            scaled_disp(x, y) = min(1.f, max(0.f, disp_image(x,y) * 1.0f / maxDisparity));
+            scaled_disp(x, y) = std::min(1.f, std::max(0.f, disp_image(x,y) * 1.0f / maxDisparity));
         }
     };
 
@@ -155,6 +155,6 @@ int main(int argc, char **argv) {
         Halide::Tools::save_image(scaled_disp, disparity_filename);
     }
     else {
-        WriteFilePFM(convertHalideImageToFloatImage<int>(disp_image), disparity_filename, 1.0f/maxDisparity);
+        // WriteFilePFM(convertHalideImageToFloatImage<int>(disp_image), disparity_filename, 1.0f/maxDisparity);
     }
 }
