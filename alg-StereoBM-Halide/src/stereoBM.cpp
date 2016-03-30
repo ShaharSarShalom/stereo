@@ -14,7 +14,7 @@ Func prefilterXSobel(Func image, int w, int h) {
 
     Func temp("temp"), xSobel("xSobel");
     temp(x, y) = clamped(x+1, y) - clamped(x-1, y);
-    xSobel(x, y) = temp(x, y-1) + 2 * clamped(x, y) + clamped(x, y+1);
+    xSobel(x, y) = cast<short>(clamp(temp(x, y-1) + 2 * clamped(x, y) + clamped(x, y+1), -31, 31) + 31);
 
     // Schedule
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
@@ -31,7 +31,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     Var x("x"), y("y"), c("c"), d("d");
 
     Func diff("diff");
-    diff(d, x, y) = cast<int>(abs(left(x, y) - right(x-d, y)));
+    diff(d, x, y) = cast<ushort>(abs(left(x, y) - right(x-d, y)));
 
     int win2 = SADWindowSize/2;
     int minD = minDisparity, maxD = minDisparity + numDisparities - 1;
@@ -48,7 +48,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     diff_T(d, xi, yi, xo, yo) = diff(d, xi+xo*x_tile_size+xmin, yi+yo*y_tile_size+ymin);
 
     Func cSAD("cSAD");
-    cSAD(d, xi, yi, xo, yo) = {0, 0};
+    cSAD(d, xi, yi, xo, yo) = {(ushort)0, (ushort)0};
     RDom r(-win2, x_tile_size + win2, -win2, y_tile_size + win2, "r");
     RVar rxi = r.x, ryi = r.y;
     Expr new_hsum = cSAD(d, rxi-1, ryi, xo, yo)[0] + diff_T(d, rxi+win2, ryi+win2, xo, yo) - select(rxi <= win2, 0, diff_T(d, rxi-win2-1, ryi+win2, xo, yo));
@@ -63,7 +63,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 
     RDom rd(minDisparity, numDisparities);
     Func disp_left("disp_left");
-    disp_left(xi, yi, xo, yo) = {minDisparity, INT_MAX};
+    disp_left(xi, yi, xo, yo) = {minDisparity, (ushort)((2<<16)-1)};
     disp_left(xi, yi, xo, yo) = tuple_select(
                             cSAD(rd, xi, yi, xo, yo)[1] < disp_left(xi, yi, xo, yo)[1],
                             {rd, cSAD(rd, xi, yi, xo, yo)[1]},
@@ -112,11 +112,9 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     // disp.update().parallel(rr[3]).allow_race_conditions();
     // unique.compute_inline();
     // disp_right.compute_at(disp, y).vectorize(x, 16);
-    // disp_left.compute_root().vectorize(xi, 16).parallel(yo);
-    // disp_left.update().parallel(yo);
 
-    cSAD.compute_at(disp, rr[2]).vectorize(d, 16);
-    cSAD.update().reorder(d, rxi, ryi, xo, yo).vectorize(d, 16);
+    cSAD.compute_at(disp, rr[2]);
+    cSAD.update().reorder(d, rxi, ryi, xo, yo).vectorize(d, 8);
     return disp;
 }
 
