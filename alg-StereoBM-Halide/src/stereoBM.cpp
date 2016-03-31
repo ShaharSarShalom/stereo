@@ -63,28 +63,18 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
             disp_left(xi, yi, xo, yo));
 
     Func disp("disp");
-    disp(x, y) = FILTERED;
-    int num_x_tiles = (xmax-xmin) / x_tile_size, num_y_tiles = (ymax-ymin) / y_tile_size;
-    RDom rr(0, x_tile_size, 0, y_tile_size, 0, num_x_tiles, 0, num_y_tiles);
-    Expr rx = rr[0] + rr[2] * x_tile_size + xmin;
-    Expr ry = rr[1] + rr[3] * y_tile_size + ymin;
+    disp(x, y) = disp_left(x%x_tile_size, y%y_tile_size, x/x_tile_size, y/y_tile_size)[0];
 
-    disp(rx, ry) = select(
-                    rx > xmax || ry >= ymax,
-                    FILTERED,
-                    disp_left(rr[0], rr[1], rr[2], rr[3])[0]
-                 );
-
-    int vector_width = 16;
+    int vector_width = 8;
 
     // Schedule
-    disp.compute_root().vectorize(x,vector_width);
+    disp.compute_root().tile(x, y, xo, yo, xi, yi, x_tile_size, y_tile_size);
 
-    disp_left.compute_at(disp, rr[2]).reorder(xi, yi, xo, yo).vectorize(xi, vector_width)
+    disp_left.compute_at(disp, xo).reorder(xi, yi, xo, yo).vectorize(xi, vector_width)
              .update().reorder(rd, xi, yi, xo, yo).vectorize(xi, vector_width).unroll(rd);
 
-    cSAD.compute_at(disp, rr[2]).reorder(d, xi,  yi,  xo, yo).vectorize(d, vector_width)
-        .update()               .reorder(d, rxi, ryi, xo, yo).vectorize(d, vector_width);
+    cSAD.compute_at(disp, xo).reorder(d, xi,  yi,  xo, yo).vectorize(d, vector_width)
+        .update()            .reorder(d, rxi, ryi, xo, yo).vectorize(d, vector_width);
     return disp;
 }
 
