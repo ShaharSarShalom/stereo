@@ -40,26 +40,27 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     int ymin = win2;
     int ymax = height - win2;
 
-    int x_tile_size = 64, y_tile_size = 32;
+    int x_tile_size = 32, y_tile_size = 32;
 
     Func diff_T("diff_T");
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
     diff_T(d, xi, yi, xo, yo) = diff(d, xi+xo*x_tile_size+xmin, yi+yo*y_tile_size+ymin);
 
-    Func cSAD("cSAD");
-    cSAD(d, xi, yi, xo, yo) = {(ushort)0, (ushort)0};
-    RDom r(-win2, x_tile_size + win2, -win2, y_tile_size + win2, "r");
-    RVar rxi = r.x, ryi = r.y;
-    Expr new_vsum = cSAD(d, rxi, ryi-1, xo, yo)[0] + diff_T(d, rxi+win2, ryi+win2, xo, yo) - select(ryi <= win2, 0, diff_T(d, rxi+win2, ryi-win2-1, xo, yo));
-    Expr new_sum  = cSAD(d, rxi-1, ryi, xo, yo)[1] + new_vsum - select(rxi <= win2, 0, cSAD(d, rxi-SADWindowSize, ryi, xo, yo)[0]);
-    cSAD(d, rxi, ryi, xo, yo) = {new_vsum, new_sum};
+    Func cSAD("cSAD"), vsum("vsum");
+    RDom rxi(-win2, x_tile_size + win2, "rxi"), ryi(-win2, y_tile_size + win2, "ryi");
+
+    vsum(d, xi, yi, xo, yo) = (ushort)0;
+    vsum(d, xi, ryi, xo, yo) = vsum(d, xi, ryi-1, xo, yo) + diff_T(d, xi+win2, ryi+win2, xo, yo) - select(ryi <= win2, 0, diff_T(d, xi+win2, ryi-win2-1, xo, yo));
+
+    cSAD(d, xi, yi, xo, yo) = (ushort)0;
+    cSAD(d, rxi, yi, xo, yo) = cSAD(d, rxi-1, yi, xo, yo) + vsum(d, rxi, yi, xo, yo) - select(rxi <= win2, 0, vsum(d, rxi-SADWindowSize, yi, xo, yo));
 
     RDom rd(minDisparity, numDisparities);
     Func disp_left("disp_left");
     disp_left(xi, yi, xo, yo) = {minDisparity, (ushort)((2<<16)-1)};
     disp_left(xi, yi, xo, yo) = tuple_select(
-            cSAD(rd, xi, yi, xo, yo)[1] < disp_left(xi, yi, xo, yo)[1],
-            {rd, cSAD(rd, xi, yi, xo, yo)[1]},
+            cSAD(rd, xi, yi, xo, yo) < disp_left(xi, yi, xo, yo)[1],
+            {rd, cSAD(rd, xi, yi, xo, yo)},
             disp_left(xi, yi, xo, yo));
 
     Func disp("disp");
@@ -75,16 +76,25 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
                     disp_left(rr[0], rr[1], rr[2], rr[3])[0]
                  );
 
-    int vector_width = 16;
+    int vector_width = 8;
 
     // Schedule
     disp.compute_root().vectorize(x,vector_width);
 
-    disp_left.compute_at(disp, rr[2]).reorder(xi, yi, xo, yo).vectorize(xi, vector_width)
-             .update().reorder(rd, xi, yi, xo, yo).vectorize(xi, vector_width).unroll(rd);
+    // reorder storage
+    diff_T.reorder_storage(xi, yi, xo, yo, d);
+    vsum.reorder_storage(xi, yi, xo, yo, d);
+    cSAD.reorder_storage(xi, yi, xo, yo, d);
 
-    cSAD.compute_at(disp, rr[2]).reorder(d, xi,  yi,  xo, yo).vectorize(d, vector_width)
-        .update()               .reorder(d, rxi, ryi, xo, yo).vectorize(d, vector_width);
+    disp_left.compute_root().reorder(xi, yi, xo, yo).vectorize(xi, vector_width)
+             .update()               .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(yo);
+
+    cSAD.compute_at(disp_left, rd).reorder(xi,  yi,  xo, yo, d).vectorize(xi, vector_width)
+        .update()                .reorder(yi, rxi, xo, yo, d).vectorize(yi, vector_width);
+
+    vsum.compute_at(disp_left, rd).reorder(xi,  yi,  xo, yo, d).vectorize(xi, vector_width)
+        .update()            .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
+
     return disp;
 }
 
