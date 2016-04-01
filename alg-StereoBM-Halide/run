@@ -32,7 +32,7 @@ set p = $p/build
 
 @ maxdisp = $ndisp - 1
 
-(set echo; $p/stereoBM_halide $im0 $im1 -o $outdir/disp0.pfm --max-disparity=$maxdisp --blocksize=21> $tmplog)
+(set echo; $p/stereoBM_halide $im0 $im1 -o $outdir/disp0.pfm --max-disparity=$maxdisp --blocksize=11> $tmplog)
 cat $tmplog
 # create timing information based on second run
 # extract seconds from output like "runtime: 0.96s  (0.68s/MP)"
