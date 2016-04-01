@@ -139,7 +139,7 @@ int main(int argc, char **argv) {
     Func disp = stereoBM(img1, img2, SADWindowSize, 0, numberOfDisparities);
     profile(disp, img1.width(), img1.height());
     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-    Image<int> disp_image = disp.realize(img1.width(), img1.height(), t);
+    Image<ushort> disp_image = disp.realize(img1.width(), img1.height(), t);
 
     int maxDisparity = numberOfDisparities - 1;
 
