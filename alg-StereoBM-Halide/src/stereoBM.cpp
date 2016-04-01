@@ -49,22 +49,22 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     Func cSAD("cSAD"), vsum("vsum");
     RDom rxi(-win2, x_tile_size + win2, "rxi"), ryi(-win2, y_tile_size + win2, "ryi");
 
-    vsum(d, xi, yi, xo, yo) = (ushort)0;
-    vsum(d, xi, ryi, xo, yo) = vsum(d, xi, ryi-1, xo, yo) + diff_T(d, xi+win2, ryi+win2, xo, yo) - select(ryi <= win2, 0, diff_T(d, xi+win2, ryi-win2-1, xo, yo));
+    vsum(d, xi, yi, xo, yo) = cast<ushort>(0);
+    vsum(d, xi, ryi, xo, yo) = vsum(d, xi, ryi-1, xo, yo) + diff_T(d, xi+win2, ryi+win2, xo, yo) - select(ryi <= win2, cast<ushort>(0), diff_T(d, xi+win2, ryi-win2-1, xo, yo));
 
-    cSAD(d, xi, yi, xo, yo) = (ushort)0;
-    cSAD(d, rxi, yi, xo, yo) = cSAD(d, rxi-1, yi, xo, yo) + vsum(d, rxi, yi, xo, yo) - select(rxi <= win2, 0, vsum(d, rxi-SADWindowSize, yi, xo, yo));
+    cSAD(d, xi, yi, xo, yo) = cast<ushort>(0);
+    cSAD(d, rxi, yi, xo, yo) = cSAD(d, rxi-1, yi, xo, yo) + vsum(d, rxi, yi, xo, yo) - select(rxi <= win2, cast<ushort>(0), vsum(d, rxi-SADWindowSize, yi, xo, yo));
 
     RDom rd(minDisparity, numDisparities);
     Func disp_left("disp_left");
-    disp_left(xi, yi, xo, yo) = {minDisparity, (ushort)((2<<16)-1)};
+    disp_left(xi, yi, xo, yo) = {cast<ushort>(minDisparity), cast<ushort>((2<<16)-1)};
     disp_left(xi, yi, xo, yo) = tuple_select(
             cSAD(rd, xi, yi, xo, yo) < disp_left(xi, yi, xo, yo)[1],
-            {rd, cSAD(rd, xi, yi, xo, yo)},
+            {cast<ushort>(rd), cSAD(rd, xi, yi, xo, yo)},
             disp_left(xi, yi, xo, yo));
 
     Func disp("disp");
-    disp(x, y) = FILTERED;
+    disp(x, y) = undef<ushort>(); // undef means this line wont be executed, use this if you dont need to initialize
     int num_x_tiles = (xmax-xmin) / x_tile_size, num_y_tiles = (ymax-ymin) / y_tile_size;
     RDom rr(0, x_tile_size, 0, y_tile_size, 0, num_x_tiles, 0, num_y_tiles);
     Expr rx = rr[0] + rr[2] * x_tile_size + xmin;
@@ -72,14 +72,14 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 
     disp(rx, ry) = select(
                     rx > xmax || ry >= ymax,
-                    FILTERED,
+                    cast<ushort>(FILTERED),
                     disp_left(rr[0], rr[1], rr[2], rr[3])[0]
                  );
 
     int vector_width = 8;
 
     // Schedule
-    disp.compute_root().vectorize(x,vector_width);
+    disp.compute_root().vectorize(x, vector_width).update().unroll(rr[0]);
 
     // reorder storage
     disp_left.reorder_storage(xi, yi, xo, yo);
