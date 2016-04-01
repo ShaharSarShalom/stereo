@@ -83,17 +83,17 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 
     // reorder storage
     diff_T.reorder_storage(xi, yi, xo, yo, d);
-    vsum.reorder_storage(xi, yi, xo, yo, d);
-    cSAD.reorder_storage(xi, yi, xo, yo, d);
+    vsum  .reorder_storage(xi, yi, xo, yo, d);
+    cSAD  .reorder_storage(xi, yi, xo, yo, d);
 
-    disp_left.compute_root().reorder(xi, yi, xo, yo).vectorize(xi, vector_width)
-             .update()               .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(yo);
+    disp_left.compute_root().reorder(xi, yi, xo, yo)    .vectorize(xi, vector_width).parallel(xo).parallel(yo)
+             .update()      .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
 
-    cSAD.compute_at(disp_left, rd).reorder(xi,  yi,  xo, yo, d).vectorize(xi, vector_width)
-        .update()                .reorder(yi, rxi, xo, yo, d).vectorize(yi, vector_width);
+    cSAD.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
+        .update()                 .reorder(yi, rxi, xo, yo, d).vectorize(yi, vector_width);
 
-    vsum.compute_at(disp_left, rd).reorder(xi,  yi,  xo, yo, d).vectorize(xi, vector_width)
-        .update()            .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
+    vsum.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
+        .update()                 .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
 
     return disp;
 }
