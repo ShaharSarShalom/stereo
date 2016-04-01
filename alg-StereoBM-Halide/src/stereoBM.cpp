@@ -82,9 +82,10 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     disp.compute_root().vectorize(x,vector_width);
 
     // reorder storage
-    diff_T.reorder_storage(xi, yi, xo, yo, d);
-    vsum  .reorder_storage(xi, yi, xo, yo, d);
-    cSAD  .reorder_storage(xi, yi, xo, yo, d);
+    disp_left.reorder_storage(xi, yi, xo, yo);
+    diff_T   .reorder_storage(xi, yi, xo, yo, d);
+    vsum     .reorder_storage(xi, yi, xo, yo, d);
+    cSAD     .reorder_storage(xi, yi, xo, yo, d);
 
     disp_left.compute_root().reorder(xi, yi, xo, yo)    .vectorize(xi, vector_width).parallel(xo).parallel(yo)
              .update()      .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
