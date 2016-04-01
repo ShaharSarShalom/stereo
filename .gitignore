@@ -1,5 +1,7 @@
 */build/*
-trainingQ/
-testQ/
+training*/
+test*/
 .DS_Store
 */.DS_Store
+*.png
+*.html
