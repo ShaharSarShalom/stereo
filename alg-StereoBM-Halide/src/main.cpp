@@ -31,18 +31,19 @@ float profile(Func myFunc, int w, int h) {
 }
 
 template <class T>
-CFloatImage convertHalideImageToFloatImage(Image<T> image) {
-    CFloatImage img(image.width(), image.height(), 1);
-    for (int x = 0; x < image.width(); x++) {
-        for (int y = 0; y < image.height(); y++) {
+CFloatImage convertHalideImageToFloatImage(Image<T> image, int width, int height, int xmin, int xmax, int ymin, int ymax) {
+    CFloatImage img(width, height, 1);
+    for (int x = 0; x < width; x++) {
+        for (int y = 0; y < height; y++) {
             float* ptr = (float *) img.PixelAddress(x, y, 0);
-            if (image(x, y) == FILTERED)
+            short pixel_val = image(x-xmin, y-ymin);
+            if (pixel_val == FILTERED || x < xmin || x > xmax || y < ymin || y > ymax)
             {
                 *ptr = INFINITY;
             }
             else
             {
-                *ptr = (float)image(x,y);
+                *ptr = (float)pixel_val;
             }
         }
     }
@@ -141,12 +142,16 @@ int main(int argc, char **argv) {
 
     Image<int8_t> img1 = Halide::Tools::load_image(std::string(img1_filename));
     Image<int8_t> img2 = Halide::Tools::load_image(std::string(img2_filename));
-    Func disp = stereoBM(img1, img2, SADWindowSize, 0, numberOfDisparities);
-    profile(disp, img1.width(), img1.height());
-    Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-    Image<short> disp_image = disp.realize(img1.width(), img1.height(), t);
 
+    int width = img1.width(), height = img1.height();
+    int win2 = SADWindowSize/2;
     int maxDisparity = numberOfDisparities - 1;
+    int xmin = maxDisparity + win2;
+    int xmax = width - win2;
+    int ymin = win2;
+    int ymax = height - win2;
+
+    Image<short> disp_image = stereoBM(img1, img2, SADWindowSize, 0, numberOfDisparities, xmin, xmax, ymin, ymax);
 
     Image<float> scaled_disp(disp_image.width(), disp_image.height());
     for (int y = 0; y < disp_image.height(); y++) {
@@ -160,6 +165,6 @@ int main(int argc, char **argv) {
         Halide::Tools::save_image(scaled_disp, disparity_filename);
     }
     else {
-        WriteFilePFM(convertHalideImageToFloatImage<short>(disp_image), disparity_filename, 1.0f/maxDisparity);
+        WriteFilePFM(convertHalideImageToFloatImage<short>(disp_image, width, height, xmin, xmax, ymin, ymax), disparity_filename, 1.0f/maxDisparity);
     }
 }

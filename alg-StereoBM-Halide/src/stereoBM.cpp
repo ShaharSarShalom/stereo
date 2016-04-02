@@ -24,7 +24,8 @@ Func prefilterXSobel(Func image, int w, int h) {
 }
 
 Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minDisparity, int numDisparities,
-    int width, int height, bool test = false, float uniquenessRatio = 0.15, int disp12MaxDiff = 1) {
+    int width, int height, int xmin, int xmax, int ymin, int ymax,
+    int x_tile_size = 32, int y_tile_size = 32, bool test = false, float uniquenessRatio = 0.15, int disp12MaxDiff = 1) {
 
     Var x("x"), y("y"), c("c"), d("d");
 
@@ -32,13 +33,6 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     diff(d, x, y) = cast<ushort>(abs(left(x, y) - right(x-d, y)));
 
     int win2 = SADWindowSize/2;
-    int minD = minDisparity, maxD = minDisparity + numDisparities - 1;
-    int xmin = maxD + win2;
-    int xmax = width - minD - win2;
-    int ymin = win2;
-    int ymax = height - win2;
-
-    int x_tile_size = 32, y_tile_size = 32;
 
     Func diff_T("diff_T");
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
@@ -68,23 +62,16 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
             disp_left(xi, yi, xo, yo));
 
     Func disp("disp");
-    disp(x, y) = cast<short>(FILTERED); // undef means this line wont be executed, use this if you dont need to initialize
-    int num_x_tiles = (xmax-xmin) / x_tile_size, num_y_tiles = (ymax-ymin) / y_tile_size;
-    RDom rr(0, x_tile_size, 0, y_tile_size, 0, num_x_tiles, 0, num_y_tiles);
-    Expr rx = rr[0] + rr[2] * x_tile_size + xmin;
-    Expr ry = rr[1] + rr[3] * y_tile_size + ymin;
-
-    disp(rx, ry) = select(
-                    rx > xmax || ry >= ymax,
-                    FILTERED,
-                    cast<short>(disp_left(rr[0], rr[1], rr[2], rr[3])[0])
-                 );
+    disp(x, y) = select(
+        x>xmax-xmin || y>ymax-ymin,
+        FILTERED,
+        cast<short>(disp_left(x%x_tile_size, y%y_tile_size, x/x_tile_size, y/y_tile_size)[0]));
 
     int vector_width = 8;
 
     // Schedule
-    disp.compute_root().parallel(y, 8).vectorize(x, vector_width)
-        .update().unroll(rr[0]);
+    disp.compute_root().tile(x, y, xo, yo, xi, yi, x_tile_size, y_tile_size).reorder(xi, yi, xo, yo)
+        .vectorize(xi, vector_width).parallel(xo).parallel(yo);
 
     // reorder storage
     disp_left.reorder_storage(xi, yi, xo, yo);
@@ -92,8 +79,8 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     vsum     .reorder_storage(xi, yi, xo, yo, d);
     cSAD     .reorder_storage(xi, yi, xo, yo, d);
 
-    disp_left.compute_root().reorder(xi, yi, xo, yo)    .vectorize(xi, vector_width).parallel(xo).parallel(yo)
-             .update()      .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
+    disp_left.compute_at(disp, xo).reorder(xi, yi, xo, yo)    .vectorize(xi, vector_width)
+             .update()            .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width);
 
     if (test){
         cSAD.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width);
@@ -106,12 +93,12 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
             .update()                 .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
     }
 
-
     return disp;
 }
 
 
-Func stereoBM(Image<int8_t> left_image, Image<int8_t> right_image, int SADWindowSize, int minDisparity, int numDisparities) {
+Image<short> stereoBM(Image<int8_t> left_image, Image<int8_t> right_image, int SADWindowSize, int minDisparity,
+              int numDisparities, int xmin, int xmax, int ymin, int ymax) {
     Var x("x"), y("y"), c("c");
     Func left("left"), right("right");
     left(x, y, c) = left_image(x, y, c);
@@ -123,10 +110,17 @@ Func stereoBM(Image<int8_t> left_image, Image<int8_t> right_image, int SADWindow
     Func filteredLeft = prefilterXSobel(left, width, height);
     Func filteredRight = prefilterXSobel(right, width, height);
 
-    /* get valid disparity region */
+    int x_tile_size = 32, y_tile_size = 32;
     Func disp = findStereoCorrespondence(filteredLeft, filteredRight, SADWindowSize, minDisparity, numDisparities,
-        left_image.width(), left_image.height());
-
+        left_image.width(), left_image.height(), xmin, xmax, ymin, ymax, x_tile_size, y_tile_size);
     disp.compile_to_lowered_stmt("disp.html", {}, HTML);
-    return disp;
+
+    int w = (xmax-xmin)/x_tile_size*x_tile_size+x_tile_size;
+    int h = (ymax-ymin)/x_tile_size*x_tile_size+x_tile_size;
+
+    profile(disp, w, h);
+    Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+    Image<short> disp_image = disp.realize(w, h, t);
+
+    return disp_image;
 }
