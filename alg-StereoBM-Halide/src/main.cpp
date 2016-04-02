@@ -36,9 +36,14 @@ CFloatImage convertHalideImageToFloatImage(Image<T> image) {
     for (int x = 0; x < image.width(); x++) {
         for (int y = 0; y < image.height(); y++) {
             float* ptr = (float *) img.PixelAddress(x, y, 0);
-            *ptr = (float)image(x,y);
-            if (*ptr < 0)
+            if (image(x, y) == FILTERED)
+            {
                 *ptr = INFINITY;
+            }
+            else
+            {
+                *ptr = (float)image(x,y);
+            }
         }
     }
     return img;
@@ -139,7 +144,7 @@ int main(int argc, char **argv) {
     Func disp = stereoBM(img1, img2, SADWindowSize, 0, numberOfDisparities);
     profile(disp, img1.width(), img1.height());
     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-    Image<ushort> disp_image = disp.realize(img1.width(), img1.height(), t);
+    Image<short> disp_image = disp.realize(img1.width(), img1.height(), t);
 
     int maxDisparity = numberOfDisparities - 1;
 
@@ -155,6 +160,6 @@ int main(int argc, char **argv) {
         Halide::Tools::save_image(scaled_disp, disparity_filename);
     }
     else {
-        WriteFilePFM(convertHalideImageToFloatImage<int>(disp_image), disparity_filename, 1.0f/maxDisparity);
+        WriteFilePFM(convertHalideImageToFloatImage<short>(disp_image), disparity_filename, 1.0f/maxDisparity);
     }
 }

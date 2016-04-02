@@ -1,10 +1,10 @@
 #include "Halide.h"
 #include "halide_image_io.h"
+#include "stereo.h"
 #include <limits>
 
 using namespace Halide;
-
-int FILTERED = -16;
+short FILTERED = -16;
 
 Func prefilterXSobel(Func image, int w, int h) {
     Var x("x"), y("y");
@@ -14,19 +14,17 @@ Func prefilterXSobel(Func image, int w, int h) {
 
     Func temp("temp"), xSobel("xSobel");
     temp(x, y) = clamped(x+1, y) - clamped(x-1, y);
-    xSobel(x, y) = cast<short>(clamp(temp(x, y-1) + 2 * clamped(x, y) + clamped(x, y+1), -31, 31) + 31);
+    xSobel(x, y) = cast<short>(clamp(temp(x, y-1) + 2 * temp(x, y) + temp(x, y+1), -31, 31) + 31);
 
     // Schedule
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-    xSobel.compute_root();
-    xSobel.tile(x, y, xo, yo, xi, yi, 128, 32);
-    temp.compute_at(xSobel, yi).vectorize(x, 16);
-    xSobel.parallel(yo);
+    xSobel.compute_root().tile(x, y, xo, yo, xi, yi, 64, 32).parallel(yo).parallel(xo);
+    temp.compute_at(xSobel, yi).vectorize(x, 8);
     return xSobel;
 }
 
 Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minDisparity, int numDisparities,
-    int width, int height, float uniquenessRatio = 0.15, int disp12MaxDiff = 1) {
+    int width, int height, bool test = false, float uniquenessRatio = 0.15, int disp12MaxDiff = 1) {
 
     Var x("x"), y("y"), c("c"), d("d");
 
@@ -47,13 +45,19 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     diff_T(d, xi, yi, xo, yo) = diff(d, xi+xo*x_tile_size+xmin, yi+yo*y_tile_size+ymin);
 
     Func cSAD("cSAD"), vsum("vsum");
-    RDom rxi(-win2, x_tile_size + win2, "rxi"), ryi(-win2, y_tile_size + win2, "ryi");
+    RDom rk(-win2, SADWindowSize, "rk");
+    RDom rxi(1, x_tile_size - 1, "rxi"), ryi(1, y_tile_size - 1, "ryi");
+    if (test) {
+        vsum(d, xi, yi, xo, yo) = sum(diff_T(d, xi, yi+rk, xo, yo));
+        cSAD(d, xi, yi, xo, yo) = sum(vsum(d, xi+rk, yi, xo, yo));
+    }
+    else{
+        vsum(d, xi, yi, xo, yo) = select(yi != 0, cast<ushort>(0), sum(diff_T(d, xi, rk, xo, yo)));
+        vsum(d, xi, ryi, xo, yo) = vsum(d, xi, ryi-1, xo, yo) + diff_T(d, xi, ryi+win2, xo, yo) - diff_T(d, xi, ryi-win2-1, xo, yo);
 
-    vsum(d, xi, yi, xo, yo) = cast<ushort>(0);
-    vsum(d, xi, ryi, xo, yo) = vsum(d, xi, ryi-1, xo, yo) + diff_T(d, xi+win2, ryi+win2, xo, yo) - select(ryi <= win2, cast<ushort>(0), diff_T(d, xi+win2, ryi-win2-1, xo, yo));
-
-    cSAD(d, xi, yi, xo, yo) = cast<ushort>(0);
-    cSAD(d, rxi, yi, xo, yo) = cSAD(d, rxi-1, yi, xo, yo) + vsum(d, rxi, yi, xo, yo) - select(rxi <= win2, cast<ushort>(0), vsum(d, rxi-SADWindowSize, yi, xo, yo));
+        cSAD(d, xi, yi, xo, yo) = select(xi != 0, cast<ushort>(0), sum(vsum(d, rk, yi, xo, yo)));
+        cSAD(d, rxi, yi, xo, yo) = cSAD(d, rxi-1, yi, xo, yo) + vsum(d, rxi+win2, yi, xo, yo) - vsum(d, rxi-win2-1, yi, xo, yo);
+    }
 
     RDom rd(minDisparity, numDisparities);
     Func disp_left("disp_left");
@@ -64,7 +68,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
             disp_left(xi, yi, xo, yo));
 
     Func disp("disp");
-    disp(x, y) = undef<ushort>(); // undef means this line wont be executed, use this if you dont need to initialize
+    disp(x, y) = cast<short>(FILTERED); // undef means this line wont be executed, use this if you dont need to initialize
     int num_x_tiles = (xmax-xmin) / x_tile_size, num_y_tiles = (ymax-ymin) / y_tile_size;
     RDom rr(0, x_tile_size, 0, y_tile_size, 0, num_x_tiles, 0, num_y_tiles);
     Expr rx = rr[0] + rr[2] * x_tile_size + xmin;
@@ -72,14 +76,15 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 
     disp(rx, ry) = select(
                     rx > xmax || ry >= ymax,
-                    cast<ushort>(FILTERED),
-                    disp_left(rr[0], rr[1], rr[2], rr[3])[0]
+                    FILTERED,
+                    cast<short>(disp_left(rr[0], rr[1], rr[2], rr[3])[0])
                  );
 
     int vector_width = 8;
 
     // Schedule
-    disp.compute_root().vectorize(x, vector_width).update().unroll(rr[0]);
+    disp.compute_root().parallel(y, 8).vectorize(x, vector_width)
+        .update().unroll(rr[0]);
 
     // reorder storage
     disp_left.reorder_storage(xi, yi, xo, yo);
@@ -90,11 +95,17 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     disp_left.compute_root().reorder(xi, yi, xo, yo)    .vectorize(xi, vector_width).parallel(xo).parallel(yo)
              .update()      .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
 
-    cSAD.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
-        .update()                 .reorder(yi, rxi, xo, yo, d).vectorize(yi, vector_width);
+    if (test){
+        cSAD.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width);
+        vsum.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width);
+    }
+    else {
+        cSAD.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
+            .update()                 .reorder(yi, rxi, xo, yo, d).vectorize(yi, vector_width);
+        vsum.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
+            .update()                 .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
+    }
 
-    vsum.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
-        .update()                 .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
 
     return disp;
 }
