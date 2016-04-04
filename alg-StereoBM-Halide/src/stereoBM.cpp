@@ -9,12 +9,12 @@ short FILTERED = -16;
 Func prefilterXSobel(Func image, int w, int h) {
     Var x("x"), y("y");
     Func clamped("clamped"), gray("gray");
-    gray(x, y) = cast<int8_t>(0.2989f*image(x, y, 0) + 0.5870f*image(x, y, 1) + 0.1140f*image(x, y, 2));
+    gray(x, y) = 0.2989f*image(x, y, 0) + 0.5870f*image(x, y, 1) + 0.1140f*image(x, y, 2);
     clamped(x, y) = gray(clamp(x, 0, w-1), clamp(y, 0, h-1));
 
     Func temp("temp"), xSobel("xSobel");
     temp(x, y) = clamped(x+1, y) - clamped(x-1, y);
-    xSobel(x, y) = cast<short>(clamp(temp(x, y-1) + 2 * temp(x, y) + temp(x, y+1), -31, 31) + 31);
+    xSobel(x, y) = cast<short>(clamp(temp(x, y-1) + 2 * temp(x, y) + temp(x, y+1), -31, 31));
 
     // Schedule
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
@@ -64,8 +64,8 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     Func disp("disp");
     disp(x, y) = select(
         x>xmax-xmin || y>ymax-ymin,
-        FILTERED,
-        cast<short>(disp_left(x%x_tile_size, y%y_tile_size, x/x_tile_size, y/y_tile_size)[0]));
+        cast<ushort>(FILTERED),
+        cast<ushort>(disp_left(x%x_tile_size, y%y_tile_size, x/x_tile_size, y/y_tile_size)[0]));
 
     int vector_width = 8;
 
@@ -97,7 +97,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 }
 
 
-Image<short> stereoBM(Image<int8_t> left_image, Image<int8_t> right_image, int SADWindowSize, int minDisparity,
+Image<ushort> stereoBM(Image<uint8_t> left_image, Image<uint8_t> right_image, int SADWindowSize, int minDisparity,
               int numDisparities, int xmin, int xmax, int ymin, int ymax) {
     Var x("x"), y("y"), c("c");
     Func left("left"), right("right");
@@ -120,7 +120,7 @@ Image<short> stereoBM(Image<int8_t> left_image, Image<int8_t> right_image, int S
 
     profile(disp, w, h);
     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-    Image<short> disp_image = disp.realize(w, h, t);
+    Image<ushort> disp_image = disp.realize(w, h, t);
 
     return disp_image;
 }

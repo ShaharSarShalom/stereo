@@ -55,53 +55,10 @@ CFloatImage ConvertMatToCImage(Mat mat) {
     return img;
 }
 
-// // write pfm image (added by DS 10/24/2013)
-// // 1-band PFM image, see http://netpbm.sourceforge.net/doc/pfm.html
-// void WriteFilePFM(float *data, int width, int height, const char* filename, float scalefactor=1/255.0)
-// {
-//     // Open the file
-//     FILE *stream = fopen(filename, "wb");
-//     if (stream == 0) {
-//         fprintf(stderr, "WriteFilePFM: could not open %s\n", filename);
-// 	exit(1);
-//     }
-//
-//     // sign of scalefact indicates endianness, see pfms specs
-//     if (littleendian())
-// 	scalefactor = -scalefactor;
-//
-//     // write the header: 3 lines: Pf, dimensions, scale factor (negative val == little endian)
-//     fprintf(stream, "Pf\n%d %d\n%f\n", width, height, scalefactor);
-//
-//     int n = width;
-//     // write rows -- pfm stores rows in inverse order!
-//     for (int y = height-1; y >= 0; y--) {
-// 	float* ptr = data + y * width;
-// 	// change invalid pixels (which seem to be represented as -10) to INF
-// 	for (int x = 0; x < width; x++) {
-// 	    if (ptr[x] < 0)
-// 		ptr[x] = INFINITY;
-//         if (ptr[x] > 1/abs(scalefactor)) {
-//             ptr[x] = 1/abs(scalefactor);
-//         }
-// 	}
-// 	if ((int)fwrite(ptr, sizeof(float), n, stream) != n) {
-// 	    fprintf(stderr, "WriteFilePFM: problem writing data\n");
-// 	    exit(1);
-// 	}
-//     }
-//     // close file
-//     fclose(stream);
-//
-//     CFloatImage img;
-//     int verbose = 0;
-//     ReadImageVerb(img, filename, verbose);
-// }
-
 int main(int argc, char** argv)
 {
     const char* algorithm_opt = "--algorithm=";
-    const char* maxdisp_opt = "--max-disparity=";
+    const char* maxdisp_opt = "--num-disparity=";
     const char* blocksize_opt = "--blocksize=";
     const char* scale_opt = "--scale=";
 
@@ -289,12 +246,17 @@ int main(int argc, char** argv)
     bm->setPreFilterCap(31);
     bm->setBlockSize(SADWindowSize > 0 ? SADWindowSize : 9);
     bm->setMinDisparity(0);
-    bm->setNumDisparities((numberOfDisparities-1)/16*16);
-    bm->setTextureThreshold(10);
-    bm->setUniquenessRatio(15);
-    bm->setSpeckleWindowSize(100);
-    bm->setSpeckleRange(32);
-    bm->setDisp12MaxDiff(1);
+    bm->setNumDisparities((numberOfDisparities-1)/16*16+16);
+    // bm->setTextureThreshold(10);
+    // bm->setUniquenessRatio(15);
+    // bm->setSpeckleWindowSize(100);
+    // bm->setSpeckleRange(32);
+    // bm->setDisp12MaxDiff(1);
+    bm->setTextureThreshold(0);
+    bm->setUniquenessRatio(0);
+    bm->setSpeckleWindowSize(-1);
+    bm->setSpeckleRange(-1);
+    bm->setDisp12MaxDiff(-1);
 
     sgbm->setPreFilterCap(63);
     int sgbmWinSize = SADWindowSize > 0 ? SADWindowSize : 3;
@@ -305,7 +267,7 @@ int main(int argc, char** argv)
     sgbm->setP1(8*cn*sgbmWinSize*sgbmWinSize);
     sgbm->setP2(32*cn*sgbmWinSize*sgbmWinSize);
     sgbm->setMinDisparity(0);
-    sgbm->setNumDisparities((numberOfDisparities-1)/16*16);
+    sgbm->setNumDisparities((numberOfDisparities-1)/16*16+16);
     sgbm->setUniquenessRatio(10);
     sgbm->setSpeckleWindowSize(100);
     sgbm->setSpeckleRange(32);
@@ -327,54 +289,6 @@ int main(int argc, char** argv)
 
     disp.convertTo(disp, DataType<float>::type);
     WriteFilePFM(ConvertMatToCImage(disp), disparity_filename, 1.0f/(numberOfDisparities-1));
-    // if( alg != STEREO_VAR )
-    //     disp.convertTo(disp8, CV_8U, 255/(numberOfDisparities*16.));
-    // else
-    //     disp.convertTo(disp8, CV_8U);
-    // imwrite("temp.png", disp8);
-
-    // CFloatImage gtdisp;
-    // int verbose;
-    // ReadImageVerb(gtdisp, "trainingQ/Vintage/disp0GT.pfm", verbose);
-    // CByteImage mask;
-    // ReadImageVerb(mask, "trainingQ/Vintage/mask0nocc.png", verbose);
-    //
-    // int width = gtdisp.Shape().width, height = gtdisp.Shape().height;
-    // int n = 0;
-    // int bad = 0;
-    // int invalid = 0;
-    // float serr = 0;
-    // int badthresh = 10;
-    // for (int y = 0; y < height; y++) {
-    // for (int x = 0; x < width; x++) {
-    //     float gt = gtdisp.Pixel(x, y, 0);
-    //     if (gt == INFINITY) // unknown
-    //     continue;
-    //     float d = disp.at<float>(y, x);
-    //     int valid = (d >=0 );
-    //     d = round(d/16);
-    //     float err = fabs(d - gt);
-    //     if (mask.Pixel(x, y, 0) != 255) { // don't evaluate pixel
-    //     } else {
-    //     n++;
-    //     if (valid) {
-    //         serr += err;
-    //         if (err > badthresh) {
-    //         bad++;
-    //         }
-    //     } else {// invalid (i.e. hole in sparse disp map)
-    //         invalid++;
-    //     }
-    //     }
-    // }
-    // }
-    // float badpercent =  100.0*bad/n;
-    // float invalidpercent =  100.0*invalid/n;
-    // float totalbadpercent =  100.0*(bad+invalid)/n;
-    // float avgErr = serr / (n - invalid); // CHANGED 10/14/2014 -- was: serr / n
-    // //printf("mask  bad%.1f  invalid  totbad   avgErr\n", badthresh);
-    // printf("%4.1f  %6.2f  %6.2f   %6.2f  %6.2f\n",   100.0*n/(width * height),
-	//    badpercent, invalidpercent, totalbadpercent, avgErr);
 
     if(point_cloud_filename)
     {

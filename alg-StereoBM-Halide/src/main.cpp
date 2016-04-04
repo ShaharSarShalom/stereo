@@ -5,6 +5,12 @@
 #include "halide_image_io.h"
 #include "imageLib.h"
 
+#include "opencv2/calib3d/calib3d.hpp"
+#include "opencv2/imgproc/imgproc.hpp"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/highgui/highgui.hpp"
+#include "opencv2/core/utility.hpp"
+
 using namespace Halide;
 
 unsigned long millisecond_timer(void) {
@@ -59,7 +65,7 @@ static void print_help()
 
 int main(int argc, char **argv) {
     const char* algorithm_opt = "--algorithm=";
-    const char* maxdisp_opt = "--max-disparity=";
+    const char* maxdisp_opt = "--num-disparity=";
     const char* blocksize_opt = "--blocksize=";
     const char* nodisplay_opt = "--no-display";
 
@@ -140,18 +146,18 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    Image<int8_t> img1 = Halide::Tools::load_image(std::string(img1_filename));
-    Image<int8_t> img2 = Halide::Tools::load_image(std::string(img2_filename));
+    Image<uint8_t> img1 = Halide::Tools::load_image(std::string(img1_filename));
+    Image<uint8_t> img2 = Halide::Tools::load_image(std::string(img2_filename));
 
     int width = img1.width(), height = img1.height();
     int win2 = SADWindowSize/2;
     int maxDisparity = numberOfDisparities - 1;
     int xmin = maxDisparity + win2;
-    int xmax = width - win2;
+    int xmax = width - win2 - 1;
     int ymin = win2;
-    int ymax = height - win2;
+    int ymax = height - win2 - 1;
 
-    Image<short> disp_image = stereoBM(img1, img2, SADWindowSize, 0, numberOfDisparities, xmin, xmax, ymin, ymax);
+    Image<ushort> disp_image = stereoBM(img1, img2, SADWindowSize, 0, (numberOfDisparities-1)/16*16+16, xmin, xmax, ymin, ymax);
 
     Image<float> scaled_disp(disp_image.width(), disp_image.height());
     for (int y = 0; y < disp_image.height(); y++) {
@@ -165,6 +171,6 @@ int main(int argc, char **argv) {
         Halide::Tools::save_image(scaled_disp, disparity_filename);
     }
     else {
-        WriteFilePFM(convertHalideImageToFloatImage<short>(disp_image, width, height, xmin, xmax, ymin, ymax), disparity_filename, 1.0f/maxDisparity);
+        WriteFilePFM(convertHalideImageToFloatImage<ushort>(disp_image, width, height, xmin, xmax, ymin, ymax), disparity_filename, 1.0f/maxDisparity);
     }
 }
