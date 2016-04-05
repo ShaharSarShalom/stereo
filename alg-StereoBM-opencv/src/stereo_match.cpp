@@ -275,17 +275,20 @@ int main(int argc, char** argv)
     sgbm->setMode(alg == STEREO_HH ? StereoSGBM::MODE_HH : StereoSGBM::MODE_SGBM);
 
     Mat disp, disp8;
-    //Mat img1p, img2p, dispp;
-    //copyMakeBorder(img1, img1p, 0, 0, numberOfDisparities, 0, IPL_BORDER_REPLICATE);
-    //copyMakeBorder(img2, img2p, 0, 0, numberOfDisparities, 0, IPL_BORDER_REPLICATE);
+
+    printf("image size %d %d\n", img1.cols, img1.rows);
 
     int64 t = getTickCount();
-    if( alg == STEREO_BM )
-        bm->compute(img1, img2, disp);
-    else if( alg == STEREO_SGBM || alg == STEREO_HH )
-        sgbm->compute(img1, img2, disp);
+    int N_TIMES = 100;
+    for (int i = 0; i < N_TIMES; i++)
+    {
+        if( alg == STEREO_BM )
+            bm->compute(img1, img2, disp);
+        else if( alg == STEREO_SGBM || alg == STEREO_HH )
+            sgbm->compute(img1, img2, disp);
+    }
     t = getTickCount() - t;
-    printf("Time elapsed: %fms\n", t*1000/getTickFrequency());
+    printf("Time elapsed: %fms\n", t*1000/getTickFrequency()/N_TIMES);
 
     disp.convertTo(disp, DataType<float>::type);
     WriteFilePFM(ConvertMatToCImage(disp), disparity_filename, 1.0f/(numberOfDisparities-1));

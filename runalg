@@ -70,18 +70,18 @@ foreach d ($dsets)
   set a = ${alg}$suffix
   if (-e $d/disp0_s.pfm) then
     mv $d/disp0_s.pfm $d/disp0${a}_s.pfm
-    echo wrote $d/disp0${a}_s.pfm
+    # echo wrote $d/disp0${a}_s.pfm
   endif
   if (-e $d/disp0.pfm) then
     mv $d/disp0.pfm $d/disp0$a.pfm
-    echo wrote $d/disp0$a.pfm
+    # echo wrote $d/disp0$a.pfm
   else
     echo "$prog failed to create $d/disp0.pfm"
     exit 1
   endif
   if (-e $d/time.txt) then
     mv $d/time.txt $d/time$a.txt
-    echo wrote $d/time$a.txt
+    # echo wrote $d/time$a.txt
   else
     echo "$prog failed to create $d/time.txt"
     exit 1
