@@ -32,7 +32,7 @@ set p = $p/build
 
 @ maxdisp = $ndisp - 1
 
-(set echo; $p/StereoOpenCV $im0 $im1 -o $outdir/disp0.pfm --num-disparity=$ndisp --algorithm=bm --blocksize=11> $tmplog)
+(set echo; $p/StereoOpenCV $im0 $im1 -o $outdir/disp0.pfm --num-disparity=$ndisp --algorithm=sgbm --blocksize=11> $tmplog)
 cat $tmplog
 # create timing information based on second run
 # extract seconds from output like "runtime: 0.96s  (0.68s/MP)"
