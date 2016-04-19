@@ -49,8 +49,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
         vsum(d, xi, yi, xo, yo) = select(yi != 0, cast<ushort>(0), sum(diff_T(d, xi, rk, xo, yo)));
         vsum(d, xi, ryi, xo, yo) = vsum(d, xi, ryi-1, xo, yo) + diff_T(d, xi, ryi+win2, xo, yo) - diff_T(d, xi, ryi-win2-1, xo, yo);
 
-        cSAD(d, xi, yi, xo, yo) = select(xi != 0, cast<ushort>(0), sum(vsum(d, rk, yi, xo, yo)));
-        cSAD(d, rxi, yi, xo, yo) = cSAD(d, rxi-1, yi, xo, yo) + vsum(d, rxi+win2, yi, xo, yo) - vsum(d, rxi-win2-1, yi, xo, yo);
+        cSAD(d, xi, yi, xo, yo) = sum(vsum(d, xi+rk, yi, xo, yo));
     }
 
     RDom rd(minDisparity, numDisparities);
@@ -87,8 +86,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
         vsum.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width);
     }
     else {
-        cSAD.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
-            .update()                 .reorder(yi, rxi, xo, yo, d).vectorize(yi, vector_width);
+        cSAD.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width);
         vsum.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
             .update()                 .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
     }
@@ -110,7 +108,7 @@ Image<ushort> stereoBM(Image<uint8_t> left_image, Image<uint8_t> right_image, in
     Func filteredLeft = prefilterXSobel(left, width, height);
     Func filteredRight = prefilterXSobel(right, width, height);
 
-    int x_tile_size = 32, y_tile_size = 32;
+    int x_tile_size = 64, y_tile_size = 32;
     Func disp = findStereoCorrespondence(filteredLeft, filteredRight, SADWindowSize, minDisparity, numDisparities,
         left_image.width(), left_image.height(), xmin, xmax, ymin, ymax, x_tile_size, y_tile_size);
     disp.compile_to_lowered_stmt("disp.html", {}, HTML);

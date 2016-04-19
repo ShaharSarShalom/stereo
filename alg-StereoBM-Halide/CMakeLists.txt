@@ -16,20 +16,27 @@ find_package( OpenCV REQUIRED )
 SET(IMAGE_LIB "~/MiddEval3/code/imageLib")
 link_directories( ${IMAGE_LIB} )
 include_directories( ${IMAGE_LIB} )
+include_directories(lib)
 
-# include directory
-include_directories(src)
-
-# sources
-FILE(GLOB SRC_FILES "src/*.cpp")
+file( GLOB LIB_SOURCES lib/*.cpp )
+file( GLOB LIB_HEADERS lib/*.h )
+add_library( Stereo ${LIB_SOURCES} ${LIB_HEADERS} )
 
 # make release version
 set(CMAKE_BUILD_TYPE Release)
 
 # build executable
-add_executable(stereoBM_halide ${SRC_FILES})
-target_link_libraries( stereoBM_halide
-    ${PNG_LIBRARY}
-    "Img.i386-g"
-    ${HALIDE_DIR}/bin/libHalide.so
-    ${OpenCV_LIBS})
+file( GLOB APP_SOURCES src/*.cxx )
+macro(add_test testname source_file)
+    add_executable (${testname} ${source_file})
+    target_link_libraries(  ${testname}
+                            ${PNG_LIBRARY}
+                            "Img.i386-g"
+                            ${HALIDE_DIR}/bin/libHalide.so
+                            Stereo
+                            ${OpenCV_LIBS}
+                          )
+endmacro()
+
+add_test(StereoBM_halide src/main.cpp)
+add_test(guidedFilter src/test.cpp)
