@@ -20,7 +20,7 @@ Func mean(Func input, int r) {
     RDom k(-r, 2*r+1);
 
     Var x("x"), y("y"), c("c"), d("d");
-    Func hsum, m(input.name() + "_m");
+    Func hsum, m;
     if (input.dimensions() == 2)
     {
         hsum(x, y) = sum(input(x + k, y));
@@ -117,13 +117,6 @@ Func guidedFilter(Func I, Func p, int r, float epsilon) {
     Expr check2 = a12 * inv(x, y, 1) + a22 * inv(x, y, 3) + a23 * inv(x, y, 4);
     Expr check3 = a13 * inv(x, y, 2) + a23 * inv(x, y, 4) + a33 * inv(x, y, 5);
 
-    // Func check("check");
-    // check(x, y) = clamp(100*abs(check2 - 1), 0, 1);
-    // apply_default_schedule(check);
-    // Image<float> check_ = check.realize(100, 100);
-    // Halide::Tools::save_image(check_, "check.png");
-
-
     Func prod("prod");
     prod(x, y, c, d) = I(x, y, c) * p(x, y, d);
     Func prod_m = mean(prod, r);
@@ -148,10 +141,18 @@ Func guidedFilter(Func I, Func p, int r, float epsilon) {
 }
 
 Func gradientX(Func image) {
-    Var x("x"), y("y");
+    Var x("x"), y("y"), c("c");
     Func temp("temp"), gradient_x("gradient_x");
-    temp(x, y) = image(x+1, y) - image(x-1, y);
-    gradient_x(x, y) = temp(x, y-1) + 2 * temp(x, y) + temp(x, y+1);
+    if (image.dimensions() == 2)
+    {
+        temp(x, y) = 0.5f * (image(x+1, y) - image(x-1, y));
+        gradient_x(x, y) = 0.25f * (temp(x, y-1) + 2 * temp(x, y) + temp(x, y+1));
+    }
+    else
+    {
+        temp(x, y, c) = 0.5f * (image(x+1, y, c) - image(x-1, y, c));
+        gradient_x(x, y, c) = 0.25f * (temp(x, y-1, c) + 2 * temp(x, y, c) + temp(x, y+1, c));
+    }
     return gradient_x;
 }
 
@@ -161,13 +162,13 @@ Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon
     Func right_gradient = gradientX(right);
 
     Func cost_left("cost_left"), cost_right("cost_right");
-    cost_left(x, y, d) = (1 - alpha) * clamp(abs(left(x, y) - right(x-d, y)), 0, threshColor) +
-                          alpha * clamp(abs(left_gradient(x, y) - right_gradient(x-d, y)), 0, threshGrad);
-    cost_right(x, y, d) = (1 - alpha) * clamp(abs(right(x, y) - left(x+d, y)), 0, threshColor) +
-                          alpha * clamp(abs(right_gradient(x, y) - left_gradient(x+d, y)), 0, threshGrad);
+    RDom rc(0, 3, "rc");
+    cost_left(x, y, d) = (1 - alpha) * clamp(sum(abs(left(x, y, rc) - right(x-d, y, rc)))/3, 0, threshColor) +
+                          alpha * clamp(sum(abs(left_gradient(x, y, rc) - right_gradient(x-d, y, rc)))/3, 0, threshGrad);
+    cost_right(x, y, d) = cost_left(x + d, y, d);
 
-    Func filtered_left = guidedFilter_gray(left, cost_left, r, epsilon);
-    Func filtered_right = guidedFilter_gray(right, cost_right, r, epsilon);
+    Func filtered_left = guidedFilter(left, cost_left, r, epsilon);
+    Func filtered_right = guidedFilter(right, cost_right, r, epsilon);
 
     RDom rd(0, numDisparities);
     Func disp_left("disp_left"), disp_right("disp_right");
@@ -185,7 +186,8 @@ Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon
 
     Func disp("disp");
     Expr disp_val = disp_left(x, y)[0];
-    disp(x, y) = select(x > disp_val && abs(disp_right(clamp(x - disp_val, 0, width-1), y)[0] - disp_val) < 1, disp_val, FILTERED);
+    disp(x, y) = select(x > disp_val && abs(disp_right(clamp(x - disp_val, 0, width-1), y)[0] - disp_val) < 1, disp_val, -1);
+    // disp(x, y) = disp_left(x, y)[0];
     apply_default_schedule(disp);
     disp.compile_to_lowered_stmt("disp.html", {}, HTML);
     return disp;
