@@ -8,7 +8,8 @@ function pfmwrite(D, filename)
 assert(size(D, 3) == 1);
 
 [rows, cols] = size(D);
-scale = -1.0;
+scale = -1/3000;
+D(D<0) = realmax('single');
 
 fid = fopen(filename, 'wb');
 

@@ -1,4 +1,4 @@
-// evaldisp.cpp 
+// evaldisp.cpp
 
 // evaluate disparity map
 // simple version for SDK
@@ -52,9 +52,9 @@ void evaldisp(CFloatImage disp, CFloatImage gtdisp, CByteImage mask, float badth
 	    if (gt == INFINITY) // unknown
 		continue;
 	    float d = scale * disp.Pixel(x / scale, y / scale, 0);
-	    int valid = (d != INFINITY);
-	    if (valid) {
 		float maxd = scale * maxdisp; // max disp range
+	    int valid = (d != INFINITY && d <= maxd * 1000);
+	    if (valid) {
 		d = __max(0, __min(maxd, d)); // clip disps to max disp range
 	    }
 	    if (valid && rounddisp)
@@ -79,7 +79,7 @@ void evaldisp(CFloatImage disp, CFloatImage gtdisp, CByteImage mask, float badth
     float totalbadpercent =  100.0*(bad+invalid)/n;
     float avgErr = serr / (n - invalid); // CHANGED 10/14/2014 -- was: serr / n
     //printf("mask  bad%.1f  invalid  totbad   avgErr\n", badthresh);
-    printf("%4.1f  %6.2f  %6.2f   %6.2f  %6.2f\n",   100.0*n/(width * height), 
+    printf("%4.1f  %6.2f  %6.2f   %6.2f  %6.2f\n",   100.0*n/(width * height),
 	   badpercent, invalidpercent, totalbadpercent, avgErr);
 }
 
@@ -102,7 +102,7 @@ int main(int argc, char *argv[])
 	    char *maskname = NULL;
 	    if (argc > argn)
 		maskname = argv[argn++];
-      
+
 	    CFloatImage disp, gtdisp, gtdisp1;
 	    ReadImageVerb(disp, dispname, verbose);
 	    ReadImageVerb(gtdisp, gtdispname, verbose);
@@ -124,6 +124,6 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "\n");
 	return -1;
     }
-  
+
     return 0;
 }
