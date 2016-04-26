@@ -29,30 +29,24 @@ CFloatImage convertHalideImageToFloatImage(Image<T> image, int xmin, int xmax, i
 }
 
 int main(int argc, char** argv ) {
-    // Image<float> image = load_image("../../trainingQ/Teddy/im0.png");
-    //
-    // Var x("x"), y("y"), c("c");
-    // Func input("input");
-    //
-    // Func t("t");
-    // t(x, y, c) = 0.5f;
-    //
-    // input(x, y, c) = image(clamp(x, 0, image.width()-1), clamp(y, 0, image.height()-1), c);
-    // Func filtered = guidedFilter(input, input, 4, 0.01);
-    // Func clamped("clamp");
-    // clamped(x, y, c) = clamp(filtered(x, y, c), 0, 1);
-    //
-    // Image<float> output = clamped.realize(image.width(), image.height(), 3);
-    // save_image(output, "filtered.png");
-    // std::cout << output(0,0,0);
-    // Func enhanced("enhanced");
-    // enhanced(x, y, c) = clamp((input(x, y, c) - filtered(x, y, c))*5 + input(x, y, c), 0, 1);
-    // output = enhanced.realize(image.width(), image.height(), 3);
-    // save_image(output, "enhanced.png");
 
-    Image<float> im0 = load_image("../../trainingQ/Teddy/im0.png");
-    Image<float> im1 = load_image("../../trainingQ/Teddy/im1.png");
-    int numDisparities = 60;
+    if (argc < 4)
+    {
+        printf("Need to provide name of left right images, output filename and disparity range\n");
+    }
+    const char* im0_name = argv[1];
+    const char* im1_name = argv[2];
+    const char* disp_image_name = argv[3];
+
+    Image<float> im0 = load_image(im0_name);
+    Image<float> im1 = load_image(im1_name);
+
+    int numDisparities = 0;
+    if( sscanf( argv[4], "%d", &numDisparities ) != 1 || numDisparities < 1)
+    {
+        printf("Disparity range invalid\n");
+    }
+
 
     Var x("x"), y("y"), c("c");
     Func left("left"), right("right");
@@ -75,5 +69,5 @@ int main(int argc, char** argv ) {
     };
     printf("%f\n", INFINITY);
     save_image(scaled_disp, "disp.png");
-    WriteFilePFM(convertHalideImageToFloatImage<int>(disp_image, 0, im0.width(), 0, im0.height()), "../../trainingQ/Teddy/disp0GF-Halide.pfm", 1.0f/maxDisparity);
+    WriteFilePFM(convertHalideImageToFloatImage<int>(disp_image, 0, im0.width(), 0, im0.height()), disp_image_name, 1.0f/maxDisparity);
 }

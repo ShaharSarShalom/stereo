@@ -38,5 +38,5 @@ macro(add_test testname source_file)
                           )
 endmacro()
 
-add_test(StereoBM_halide src/main.cpp)
-add_test(guidedFilter src/test.cpp)
+add_test(runBM src/runBM.cpp)
+add_test(runGF src/runGF.cpp)

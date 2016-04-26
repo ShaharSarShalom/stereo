@@ -30,7 +30,7 @@ set p = $0:h
 if ($p == $0) set p = .
 set p = $p/../StereoHalide/build
 
-(set echo; $p/runBM $im0 $im1 $outdir/disp0.pfm --num-disparity=$ndisp --blocksize=11> $tmplog)
+(set echo; $p/runGF $im0 $im1 $outdir/disp0.pfm $ndisp> $tmplog)
 cat $tmplog
 # create timing information based on second run
 # extract seconds from output like "runtime: 0.96s  (0.68s/MP)"

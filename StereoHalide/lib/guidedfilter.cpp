@@ -142,17 +142,17 @@ Func guidedFilter(Func I, Func p, int r, float epsilon) {
 
 Func gradientX(Func image) {
     Var x("x"), y("y"), c("c");
-    Func temp("temp"), gradient_x("gradient_x");
+    Func temp("temp"), gradient_x("gradient_x"), gray("gray");
     if (image.dimensions() == 2)
     {
-        temp(x, y) = 0.5f * (image(x+1, y) - image(x-1, y));
-        gradient_x(x, y) = 0.25f * (temp(x, y-1) + 2 * temp(x, y) + temp(x, y+1));
+        gray(x, y) = image(x, y);
     }
     else
     {
-        temp(x, y, c) = 0.5f * (image(x+1, y, c) - image(x-1, y, c));
-        gradient_x(x, y, c) = 0.25f * (temp(x, y-1, c) + 2 * temp(x, y, c) + temp(x, y+1, c));
+        gray(x, y) = 0.2989f*image(x, y, 0) + 0.5870f*image(x, y, 1) + 0.1140f*image(x, y, 2);
     }
+    temp(x, y) = 0.5f * (gray(x+1, y) - gray(x-1, y));
+    gradient_x(x, y) = 0.25f * (temp(x, y-1) + 2 * temp(x, y) + temp(x, y+1));
     return gradient_x;
 }
 
@@ -164,7 +164,7 @@ Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon
     Func cost_left("cost_left"), cost_right("cost_right");
     RDom rc(0, 3, "rc");
     cost_left(x, y, d) = (1 - alpha) * clamp(sum(abs(left(x, y, rc) - right(x-d, y, rc)))/3, 0, threshColor) +
-                          alpha * clamp(sum(abs(left_gradient(x, y, rc) - right_gradient(x-d, y, rc)))/3, 0, threshGrad);
+                          alpha * clamp(abs(left_gradient(x, y) - right_gradient(x-d, y)), 0, threshGrad);
     cost_right(x, y, d) = cost_left(x + d, y, d);
 
     Func filtered_left = guidedFilter(left, cost_left, r, epsilon);
@@ -186,7 +186,7 @@ Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon
 
     Func disp("disp");
     Expr disp_val = disp_left(x, y)[0];
-    disp(x, y) = select(x > disp_val && abs(disp_right(clamp(x - disp_val, 0, width-1), y)[0] - disp_val) < 1, disp_val, -1);
+    disp(x, y) = select(x > disp_val && abs(disp_right(clamp(x - disp_val, 0, width-1), y)[0] - disp_val) <= 1, disp_val, -1);
     // disp(x, y) = disp_left(x, y)[0];
     apply_default_schedule(disp);
     disp.compile_to_lowered_stmt("disp.html", {}, HTML);
