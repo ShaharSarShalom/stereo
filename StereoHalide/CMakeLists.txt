@@ -40,3 +40,4 @@ endmacro()
 
 add_test(runBM src/runBM.cpp)
 add_test(runGF src/runGF.cpp)
+add_test(test src/test.cpp)
