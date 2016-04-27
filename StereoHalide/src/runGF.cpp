@@ -53,11 +53,7 @@ int main(int argc, char** argv ) {
     left(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
     right(x, y, c) = im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c);
 
-    // Func gray_left("gray_left"), gray_right("gray_right");
-    // gray_left(x, y) = 0.2989f*left(x, y, 0) + 0.5870f*left(x, y, 1) + 0.1140f*left(x, y, 2);
-    // gray_right(x, y) = 0.2989f*right(x, y, 0) + 0.5870f*right(x, y, 1) + 0.1140f*right(x, y, 2);
-
-    Func disp = stereoGF(left, right, im0.width(), im0.height(), 9, 0.0001, numDisparities, 0.9, 7/255.0, 2/255.0);
+    Func disp = stereoGF(left, right, im0.width(), im0.height(), 9, 0.0001, numDisparities, 0.9, 0.0028, 0.008);
     Image<int> disp_image = disp.realize(im0.width(), im1.height());
     Image<float> scaled_disp(disp_image.width(), disp_image.height());
 
