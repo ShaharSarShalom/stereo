@@ -89,8 +89,10 @@ if (UseParallelToolbox)
         p1 = dispVol1(:,:,d);
         
         q = imguidedfilter(double(p), Il, 'NeighborhoodSize', r, 'DegreeOfSmoothing', eps);
+%         q = guidedfilter_color(Il, double(p), r, eps);
         p1 =  flipdim(p1,2);
         q1 = imguidedfilter(double(p1), Il_1, 'NeighborhoodSize', r, 'DegreeOfSmoothing', eps);
+%         q1 = guidedfilter_color(Il_1, double(p_1), r, eps);
         
         dispVol(:,:,d) = q;
         dispVol1(:,:,d) = flipdim(q1,2);
@@ -101,9 +103,10 @@ else
         p1 = dispVol1(:,:,d);
         
         q = imguidedfilter(double(p), Il, 'NeighborhoodSize', r, 'DegreeOfSmoothing', eps);
+%         q = guidedfilter_color(Il, double(p), r, eps);
         p1 =  flipdim(p1,2);
         q1 = imguidedfilter(double(p1), Il_1, 'NeighborhoodSize', r, 'DegreeOfSmoothing', eps);
-        
+%         q1 = guidedfilter_color(Il_1, double(p1), r, eps);
         dispVol(:,:,d) = q;
         dispVol1(:,:,d) = flipdim(q1,2);
     end

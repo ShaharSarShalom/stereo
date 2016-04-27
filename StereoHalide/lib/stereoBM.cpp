@@ -116,7 +116,7 @@ Image<ushort> stereoBM(Image<uint8_t> left_image, Image<uint8_t> right_image, in
     int w = (xmax-xmin)/x_tile_size*x_tile_size+x_tile_size;
     int h = (ymax-ymin)/x_tile_size*x_tile_size+x_tile_size;
 
-    profile(disp, w, h);
+    profile(disp, w, h, 100);
     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
     Image<ushort> disp_image = disp.realize(w, h, t);
 

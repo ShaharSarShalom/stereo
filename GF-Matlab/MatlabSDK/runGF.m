@@ -53,7 +53,7 @@ else
 end
 
 ErrorRate = zeros(1,15);
-for im_num = 1:1
+for im_num = 2:15
     I{1} = imread(['~/MiddEval3/',imgset,imgsize,'/',image_names{im_num},'/im0.png']);
     I{2} = imread(['~/MiddEval3/',imgset,imgsize,'/',image_names{im_num},'/im1.png']);
     
