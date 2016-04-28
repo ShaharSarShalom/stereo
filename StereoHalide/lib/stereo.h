@@ -12,5 +12,6 @@ Image<ushort> stereoBM(Image<uint8_t> left_image, Image<uint8_t> right_image, in
 Func guidedFilter_gray(Func I, Func p, int r, float epsilon);
 Func guidedFilter(Func I, Func p, int r, float epsilon);
 Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon, int numDisparities, float alpha, float threshColor, float threshGrad);
+Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, float epsilon, int numDisparities, float alpha, float threshColor, float threshGrad);
 
 void guidedFilterTest();

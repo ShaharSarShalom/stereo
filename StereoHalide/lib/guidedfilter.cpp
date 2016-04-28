@@ -158,13 +158,14 @@ Func gradientX(Func image) {
 }
 
 Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon, int numDisparities, float alpha, float threshColor, float threshGrad){
-    Var x("x"), y("y"), d("d");
+    Var x("x"), y("y"), c("c"), d("d");
     Func left_gradient = gradientX(left);
     Func right_gradient = gradientX(right);
 
     Func cost_left("cost_left"), cost_right("cost_right");
-    RDom rc(0, 3, "rc");
-    cost_left(x, y, d) = (1 - alpha) * clamp(sum(abs(left(x, y, rc) - right(x-d, y, rc)))/3, 0, threshColor) +
+    Func diff("diff");
+    diff(x, y, c, d) = abs(left(x, y, c) - right(x-d, y, c));
+    cost_left(x, y, d) = (1 - alpha) * clamp((diff(x, y, 0, d) + diff(x, y, 1, d) + diff(x, y, 2, d))/3, 0, threshColor) +
                           alpha * clamp(abs(left_gradient(x, y) - right_gradient(x-d, y)), 0, threshGrad);
     cost_right(x, y, d) = cost_left(x + d, y, d);
 
@@ -275,7 +276,7 @@ void guidanceImageProcessing(Func I, Func& meanI, Func& inv, int r, float eps)
     float scale = 1.0f/(2*r+1)/(2*r+1);
 
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-    meanWithSchedule(I, meanI, r, xo, false/*c_innermost*/, true/*copy*/);
+    meanWithSchedule(I, meanI, r, Var::outermost(), false/*c_innermost*/, true/*copy*/);
 
     Func square("square");
     Func ind2pair("ind2pair");
@@ -312,8 +313,8 @@ void guidanceImageProcessing(Func I, Func& meanI, Func& inv, int r, float eps)
     /****************** Schedule ********************/
     int vector_width = 8;
 
-    inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
-    inv_.compute_at(inv, xi).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
+    // inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
+    inv_.compute_at(inv, x).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
     inv_.update().vectorize(x, vector_width);
     inv_.update(1).vectorize(x, vector_width);
     inv_.update(2).vectorize(x, vector_width);
@@ -321,10 +322,10 @@ void guidanceImageProcessing(Func I, Func& meanI, Func& inv, int r, float eps)
     inv_.update(4).vectorize(x, vector_width);
     inv_.update(5).vectorize(x, vector_width);
     inv_.update(6).vectorize(x, vector_width);
-    sigma.compute_at(inv, xi).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
-    s_m.compute_at(inv, xo).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
+    sigma.compute_at(inv, x).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
+    s_m.compute_at(inv, Var::outermost()).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
 
-    meanI.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(xi, yi, xo, yo, c).vectorize(xi, vector_width);
+    // meanI.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(xi, yi, xo, yo, c).vectorize(xi, vector_width);
     ind2pair.compute_root();
 }
 
@@ -427,16 +428,20 @@ Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, flo
     int vector_width = 8;
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
     disp.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).vectorize(xi, vector_width);
+    mean_left.compute_at(disp, xo).vectorize(x, vector_width);
+    mean_right.compute_at(disp, xo).vectorize(x, vector_width);
+    inv_left.compute_at(disp, xo).reorder(c, x, y).vectorize(x, vector_width);
+    inv_right.compute_at(disp, xo).reorder(c, x, y).vectorize(x, vector_width);
     disp_left.compute_at(disp, xo).vectorize(x, vector_width)
              .update().reorder(x, y, rd).vectorize(x, vector_width);
 
     filtered_left.compute_at(disp_left, rd).vectorize(x, vector_width);
     mean_cost.compute_at(filtered_left, Var::outermost()).vectorize(x, vector_width);
     cost.compute_at(filtered_left, Var::outermost()).vectorize(x, vector_width);
-    left.compute_root();
-    right.compute_root();
-    left_gradient.compute_root();
-    right_gradient.compute_root();
+    left.compute_root().vectorize(x, vector_width);
+    right.compute_root().vectorize(x, vector_width);
+    left_gradient.compute_root().vectorize(x, vector_width);
+    right_gradient.compute_root().vectorize(x, vector_width);
     return disp;
 }
 
