@@ -355,33 +355,33 @@ void filteringCost(Func I, Func p, Func meanI, Func meanP, Func inv, Func& filte
     pair2ind(2, 2) = 5;
 
     Func prod("prod");
-    prod(x, y, c, d) = I(x, y, c) * p(x, y, d);
+    prod(x, y, c, d) = I(x, y, c, d) * p(x, y, d);
 
     Func prod_m("prod_m");
     meanWithSchedule(prod, prod_m, r, d, true);
 
     Func a_factor("a_factor");
-    a_factor(x, y, c, d) = prod_m(x, y, c, d) - meanI(x, y, c) * meanP(x, y, d);
+    a_factor(x, y, c, d) = prod_m(x, y, c, d) - meanI(x, y, c, d) * meanP(x, y, d);
 
     Func ab("ab");
     RDom k(0, 3, "k");
     RDom rc(0, 4, "rc");
     ab(x, y, c, d) = undef<float>();
     ab(x, y, rc, d) = select(rc == 3,
-                            meanP(x, y, d) - ab(x, y, 0, d) * meanI(x, y, 0)
-                                           - ab(x, y, 1, d) * meanI(x, y, 1)
-                                           - ab(x, y, 2, d) * meanI(x, y, 2),
-                            inv(x, y, clamp(pair2ind(rc, 0), 0, 5)) * a_factor(x, y, 0, d)
-                          + inv(x, y, clamp(pair2ind(rc, 1), 0, 5)) * a_factor(x, y, 1, d)
-                          + inv(x, y, clamp(pair2ind(rc, 2), 0, 5)) * a_factor(x, y, 2, d) );
+                            meanP(x, y, d) - ab(x, y, 0, d) * meanI(x, y, 0, d)
+                                           - ab(x, y, 1, d) * meanI(x, y, 1, d)
+                                           - ab(x, y, 2, d) * meanI(x, y, 2, d),
+                            inv(x, y, clamp(pair2ind(rc, 0), 0, 5), d) * a_factor(x, y, 0, d)
+                          + inv(x, y, clamp(pair2ind(rc, 1), 0, 5), d) * a_factor(x, y, 1, d)
+                          + inv(x, y, clamp(pair2ind(rc, 2), 0, 5), d) * a_factor(x, y, 2, d) );
 
     Func ab_m("ab_m");
     meanWithSchedule(ab, ab_m, r, d, true);
 
     filtered(x, y, d) = ab_m(x, y, 3, d)
-                      + ab_m(x, y, 0, d) * I(x, y, 0)
-                      + ab_m(x, y, 1, d) * I(x, y, 1)
-                      + ab_m(x, y, 2, d) * I(x, y, 2);
+                      + ab_m(x, y, 0, d) * I(x, y, 0, d)
+                      + ab_m(x, y, 1, d) * I(x, y, 1, d)
+                      + ab_m(x, y, 2, d) * I(x, y, 2, d);
 
     /************************** Schedule *************************/
     int vector_width = 8;
@@ -409,46 +409,56 @@ Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, flo
     guidanceImageProcessing(left, mean_left, inv_left, r, epsilon);
     guidanceImageProcessing(right, mean_right, inv_right, r, epsilon);
 
+    Func mean_left_4d("mean_left_4d"), mean_right_4d("mean_right_4d"), inv_left_4d("inv_left_4d"), inv_right_4d("inv_right_4d");
+    Func left_4d("left_4d"), right_4d("right_4d");
+    left_4d(x, y, c, d) = left(x, y, c);
+    right_4d(x, y, c, d) = right(x-d, y, c);
+    mean_left_4d(x, y, c, d) = mean_left(x, y, c);
+    mean_right_4d(x, y, c, d) = mean_right(x-d, y, c);
+    inv_left_4d(x, y, c, d) = inv_left(x, y, c);
+    inv_right_4d(x, y, c, d) = inv_right(x-d, y, c);
+
     Func mean_cost("mean_cost");
     meanWithSchedule(cost, mean_cost, r, d, false/*d innermost*/, false/*scheduleI*/);
 
-    Func filtered_left("filtered_left");
-    filteringCost(left, cost, mean_left, mean_cost, inv_left, filtered_left, r);
+    Func filtered_left("filtered_left"), filtered_right("filtered_right");
+    filteringCost(left_4d, cost, mean_left_4d, mean_cost, inv_left_4d, filtered_left, r);
+    filteringCost(right_4d, cost, mean_right_4d, mean_cost, inv_right_4d, filtered_right, r);
 
     RDom rd(0, numDisparities, "rd");
-    Func disp_left("disp_left"), disp_right("disp_right");
-    disp_left(x, y) = {0, INFINITY};
-    disp_left(x, y) = tuple_select(
-            filtered_left(x, y, rd) < disp_left(x, y)[1],
-            {rd, filtered_left(x, y, rd)},
-            disp_left(x, y));
-    //
-    // disp_right(x, y) = {0, INFINITY};
-    // disp_right(x, y) = tuple_select(
-    //         filtered_right(x, y, rd) < disp_right(x, y)[1],
-    //         {rd, filtered_right(x, y, rd)},
-    //         disp_right(x, y));
-    //
+    Func disp_left_right("disp_left_right");
+    disp_left_right(x, y) = {0, INFINITY, 0, INFINITY};
+    Expr left_cond = filtered_left(x, y, rd) < disp_left_right(x, y)[1];
+    Expr right_cond = filtered_right(x+rd, y, rd) < disp_left_right(x, y)[3];
+    disp_left_right(x, y) = {
+        select(left_cond, rd, disp_left_right(x, y)[0]),
+        select(left_cond, filtered_left(x, y, rd), disp_left_right(x, y)[1]),
+        select(right_cond, rd, disp_left_right(x, y)[2]),
+        select(right_cond, filtered_right(x+rd, y, rd), disp_left_right(x, y)[3]),
+    };
+
     Func disp("disp");
-    Expr disp_val = disp_left(x, y)[0];
-    // disp(x, y) = select(x > disp_val && abs(disp_right(clamp(x - disp_val, 0, width-1), y)[0] - disp_val) < 1, disp_val, -1);
-    disp(x, y) = disp_left(x, y)[0];
+    Expr disp_val = disp_left_right(x, y)[0];
+    disp(x, y) = select(x > disp_val && abs(disp_left_right(clamp(x - disp_val, 0, width-1), y)[2] - disp_val) < 1, disp_val, -1);
 
     /****************************** Schedule ****************************/
     int vector_width = 8;
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
     disp.compute_root().vectorize(x, vector_width).parallel(x);
-    disp_left.compute_root().vectorize(x, vector_width)
-             .update().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(xi, yi, xo, yo, rd).vectorize(xi, vector_width);
+    disp_left_right.compute_root().vectorize(x, vector_width)
+                   .update().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(xi, yi, xo, yo, rd).vectorize(xi, vector_width);
 
-    // filtered_left.compute_at(disp_left, rd).reorder(x, y, d).vectorize(x, vector_width);
-    filtered_left.compute_at(disp_left, rd).tile(x, y, xo, yo, xi, yi, 128, 64)
-                 .reorder(xi, yi, d, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
-    mean_cost.compute_at(filtered_left, d).vectorize(x, vector_width);
-    cost.compute_at(filtered_left, d).vectorize(x, vector_width);
+    filtered_left.compute_at(disp_left_right, rd).tile(x, y, xo, yo, xi, yi, 128, 64)
+                 .reorder(xi, yi, d, xo, yo).vectorize(xi, vector_width);
+    filtered_right.compute_at(disp_left_right, rd).tile(x, y, xo, yo, xi, yi, 128, 64)
+                 .reorder(xi, yi, d, xo, yo).vectorize(xi, vector_width);
+    mean_cost.compute_at(disp_left_right, rd).vectorize(x, vector_width);
+    cost.compute_at(disp_left_right, rd).vectorize(x, vector_width);
 
     mean_left.compute_root().vectorize(x, vector_width);
     inv_left.compute_root().reorder(c, x, y).vectorize(x, vector_width);
+    mean_right.compute_root().vectorize(x, vector_width);
+    inv_right.compute_root().reorder(c, x, y).vectorize(x, vector_width);
 
     left.compute_root().vectorize(x, vector_width);
     right.compute_root().vectorize(x, vector_width);
