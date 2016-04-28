@@ -427,17 +427,19 @@ Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, flo
     /****************************** Schedule ****************************/
     int vector_width = 8;
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-    disp.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).vectorize(xi, vector_width);
-    mean_left.compute_at(disp, xo).vectorize(x, vector_width);
-    mean_right.compute_at(disp, xo).vectorize(x, vector_width);
-    inv_left.compute_at(disp, xo).reorder(c, x, y).vectorize(x, vector_width);
-    inv_right.compute_at(disp, xo).reorder(c, x, y).vectorize(x, vector_width);
-    disp_left.compute_at(disp, xo).vectorize(x, vector_width)
-             .update().reorder(x, y, rd).vectorize(x, vector_width);
+    disp.compute_root().vectorize(x, vector_width);
+    disp_left.compute_root().vectorize(x, vector_width)
+             .update().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(xi, yi, xo, yo, rd).vectorize(xi, vector_width);
 
-    filtered_left.compute_at(disp_left, rd).vectorize(x, vector_width);
-    mean_cost.compute_at(filtered_left, Var::outermost()).vectorize(x, vector_width);
-    cost.compute_at(filtered_left, Var::outermost()).vectorize(x, vector_width);
+    // filtered_left.compute_at(disp_left, rd).reorder(x, y, d).vectorize(x, vector_width);
+    filtered_left.compute_at(disp_left, rd).tile(x, y, xo, yo, xi, yi, 128, 64)
+                 .reorder(xi, yi, d, xo, yo).vectorize(xi, vector_width);
+    mean_cost.compute_at(filtered_left, d).vectorize(x, vector_width);
+    cost.compute_at(filtered_left, d).vectorize(x, vector_width);
+
+    mean_left.compute_root().vectorize(x, vector_width);
+    inv_left.compute_root().reorder(c, x, y).vectorize(x, vector_width);
+
     left.compute_root().vectorize(x, vector_width);
     right.compute_root().vectorize(x, vector_width);
     left_gradient.compute_root().vectorize(x, vector_width);
