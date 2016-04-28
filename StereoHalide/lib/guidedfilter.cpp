@@ -204,69 +204,48 @@ Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon
 /* return I_copy if copies I
 * this is to enable schedule functions at I_copy
 */
-Func meanWithSchedule(Func I, Func meanI, int r, Var compute_level, bool c_innermost, bool copy = false)
+void meanWithSchedule(Func I, Func meanI, int r, Var compute_level, bool c_innermost, bool scheduleI = true)
 {
     float scale = 1.0f/(2*r+1)/(2*r+1);
     Var x("x"), y("y"), c(I.function().args()[2]), d("d");
-    Func I_copy("copy"), I_vsum("vsum");
+    Func I_vsum("vsum");
     RDom k(-r, 2*r+1);
     int vector_width = 8;
 
     if (I.dimensions() == 3)
     {
-        I_copy(x, y, c) = I(x, y, c);
-        I_vsum(x, y, c) = sum(I_copy(x+k, y, c));
+        I_vsum(x, y, c) = sum(I(x+k, y, c));
         meanI(x, y, c) = sum(I_vsum(x, y+k, c)) * scale;
 
         /*************** Schedule *******************/
         I_vsum.compute_at(meanI, compute_level).unroll(c).vectorize(x, vector_width);
-        if  (copy)
-        {
-            I_copy.compute_at(I_vsum, y).unroll(c).vectorize(x, vector_width);
-        }
-        else
+        if  (scheduleI)
         {
             I.compute_at(I_vsum, y).unroll(c).vectorize(x, vector_width);
         }
         if (c_innermost)
         {
             I_vsum.reorder(c, x, y);
-            I_copy.reorder(c, x, y);
             I.reorder(c, x, y);
         }
 
     }
     else if (I.dimensions() == 4)
     {
-        I_copy(x, y, c, d) = I(x, y, c, d);
-        I_vsum(x, y, c, d) = sum(I_copy(x+k, y, c, d));
+        I_vsum(x, y, c, d) = sum(I(x+k, y, c, d));
         meanI(x, y, c, d) = sum(I_vsum(x, y+k, c, d)) * scale;
 
         /*************** Schedule *******************/
         I_vsum.compute_at(meanI, compute_level).unroll(c).unroll(d).vectorize(x, vector_width);
-        if  (copy)
-        {
-            I_copy.compute_at(I_vsum, y).unroll(c).unroll(d).vectorize(x, vector_width);
-        }
-        else
+        if  (scheduleI)
         {
             I.compute_at(I_vsum, y).unroll(c).unroll(d).vectorize(x, vector_width);
         }
         if (c_innermost)
         {
             I_vsum.reorder(c, x, y, d);
-            I_copy.reorder(c, x, y, d);
             I.reorder(c, x, y, d);
         }
-    }
-
-    if (copy)
-    {
-        return I_copy;
-    }
-    else
-    {
-        return I;
     }
 }
 
@@ -276,7 +255,7 @@ void guidanceImageProcessing(Func I, Func& meanI, Func& inv, int r, float eps)
     float scale = 1.0f/(2*r+1)/(2*r+1);
 
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-    meanWithSchedule(I, meanI, r, Var::outermost(), false/*c_innermost*/, true/*copy*/);
+    meanWithSchedule(I, meanI, r, Var::outermost(), false/*c_innermost*/, false/*scheduleI*/);
 
     Func square("square");
     Func ind2pair("ind2pair");
@@ -354,14 +333,18 @@ void filteringCost(Func I, Func p, Func meanI, Func meanP, Func inv, Func& filte
 
     Func ab("ab");
     RDom k(0, 3, "k");
+    RDom rc(0, 4, "rc");
     ab(x, y, c, d) = undef<float>();
-    ab(x, y, 0, d) = sum(inv(x, y, clamp(pair2ind(0, k), 0, 5)) * a_factor(x, y, k, d));
-    ab(x, y, 1, d) = sum(inv(x, y, clamp(pair2ind(1, k), 0, 5)) * a_factor(x, y, k, d));
-    ab(x, y, 2, d) = sum(inv(x, y, clamp(pair2ind(2, k), 0, 5)) * a_factor(x, y, k, d));
-    ab(x, y, 3, d) = meanP(x, y, d) - ab(x, y, 0, d) * meanI(x, y, 0) - ab(x, y, 1, d) * meanI(x, y, 1) - ab(x, y, 2, d) * meanI(x, y, 2);
+    ab(x, y, rc, d) = select(rc == 3,
+                            meanP(x, y, d) - ab(x, y, 0, d) * meanI(x, y, 0)
+                                           - ab(x, y, 1, d) * meanI(x, y, 1)
+                                           - ab(x, y, 2, d) * meanI(x, y, 2),
+                            inv(x, y, clamp(pair2ind(rc, 0), 0, 5)) * a_factor(x, y, 0, d)
+                          + inv(x, y, clamp(pair2ind(rc, 1), 0, 5)) * a_factor(x, y, 1, d)
+                          + inv(x, y, clamp(pair2ind(rc, 2), 0, 5)) * a_factor(x, y, 2, d) );
 
     Func ab_m("ab_m");
-    Func ab_copy = meanWithSchedule(ab, ab_m, r, d, true, true /*copy*/);
+    meanWithSchedule(ab, ab_m, r, d, true);
 
     filtered(x, y, d) = ab_m(x, y, 3, d)
                       + ab_m(x, y, 0, d) * I(x, y, 0)
@@ -371,14 +354,9 @@ void filteringCost(Func I, Func p, Func meanI, Func meanP, Func inv, Func& filte
     /************************** Schedule *************************/
     int vector_width = 8;
     ab_m.compute_at(filtered, d).reorder(x, y, c, d).unroll(c).unroll(d).vectorize(x, vector_width);
+    ab.update().reorder(rc, x, y, d).unroll(rc).unroll(d).vectorize(x, vector_width);
 
-    ab.compute_at(ab_copy, x);
-    ab.update(0).reorder(x, y, d).unroll(d).vectorize(x, vector_width);
-    ab.update(1).reorder(x, y, d).unroll(d).vectorize(x, vector_width);
-    ab.update(2).reorder(x, y, d).unroll(d).vectorize(x, vector_width);
-    ab.update(3).reorder(x, y, d).unroll(d).vectorize(x, vector_width);
-
-    a_factor.compute_at(ab_copy, x).reorder(c, x, y, d).unroll(c).unroll(d).vectorize(x, vector_width);
+    a_factor.compute_at(ab, x).reorder(c, x, y, d).unroll(c).unroll(d).vectorize(x, vector_width);
 
     prod_m.compute_at(filtered, d).reorder(c, x, y, d).unroll(c).unroll(d).vectorize(x, vector_width);
     pair2ind.compute_root();
@@ -400,7 +378,7 @@ Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, flo
     guidanceImageProcessing(right, mean_right, inv_right, r, epsilon);
 
     Func mean_cost("mean_cost");
-    meanWithSchedule(cost, mean_cost, r, d, false/*d innermost*/, true/*copy*/);
+    meanWithSchedule(cost, mean_cost, r, d, false/*d innermost*/, false/*scheduleI*/);
 
     Func filtered_left("filtered_left");
     filteringCost(left, cost, mean_left, mean_cost, inv_left, filtered_left, r);
