@@ -214,10 +214,22 @@ void meanWithSchedule(Func I, Func meanI, int r, Var compute_level, bool c_inner
 
     if (I.dimensions() == 3)
     {
-        I_vsum(x, y, c) = sum(I(x+k, y, c));
+        Func small_vsum("small_vsum"), small_hsum("small_hsum");
+        small_vsum(x, y, c)= I(x, y, c) + I(x+1, y, c) + I(x+2, y, c) + I(x+3, y, c);
+        RDom rt(0, (r+1)/2, "rt");
+        if (r % 2 == 1)
+        {
+            I_vsum(x, y, c) = sum(small_vsum(x-r+rt*4, y, c)) - I(x+r+1, y, c);
+        }
+        else
+        {
+            I_vsum(x, y, c) = sum(small_vsum(x-r+rt*4, y, c)) + I(x+r, y, c);
+        }
+
         meanI(x, y, c) = sum(I_vsum(x, y+k, c)) * scale;
 
         /*************** Schedule *******************/
+        small_vsum.compute_at(I_vsum, y).vectorize(x, vector_width);
         I_vsum.compute_at(meanI, compute_level).vectorize(x, vector_width);
         if  (scheduleI)
         {
@@ -236,10 +248,22 @@ void meanWithSchedule(Func I, Func meanI, int r, Var compute_level, bool c_inner
     }
     else if (I.dimensions() == 4)
     {
-        I_vsum(x, y, c, d) = sum(I(x+k, y, c, d));
+        Func small_vsum("small_vsum"), small_hsum("small_hsum");
+        small_vsum(x, y, c, d)= I(x, y, c, d) + I(x+1, y, c, d) + I(x+2, y, c, d) + I(x+3, y, c, d);
+        RDom rt(0, (r+1)/2, "rt");
+        if (r % 2 == 1)
+        {
+            I_vsum(x, y, c, d) = sum(small_vsum(x-r+rt*4, y, c, d)) - I(x+r+1, y, c, d);
+        }
+        else
+        {
+            I_vsum(x, y, c, d) = sum(small_vsum(x-r+rt*4, y, c, d)) + I(x+r, y, c, d);
+        }
+
         meanI(x, y, c, d) = sum(I_vsum(x, y+k, c, d)) * scale;
 
         /*************** Schedule *******************/
+        small_vsum.compute_at(I_vsum, y).vectorize(x, vector_width);
         I_vsum.compute_at(meanI, compute_level).unroll(c).unroll(d).vectorize(x, vector_width);
         if  (scheduleI)
         {
@@ -301,7 +325,6 @@ void guidanceImageProcessing(Func I, Func& meanI, Func& inv, int r, float eps)
     /****************** Schedule ********************/
     int vector_width = 8;
 
-    // inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
     inv_.compute_at(inv, x).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
     inv_.update().vectorize(x, vector_width);
     inv_.update(1).vectorize(x, vector_width);
@@ -313,7 +336,6 @@ void guidanceImageProcessing(Func I, Func& meanI, Func& inv, int r, float eps)
     sigma.compute_at(inv, x).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
     s_m.compute_at(inv, Var::outermost()).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
 
-    // meanI.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(xi, yi, xo, yo, c).vectorize(xi, vector_width);
     ind2pair.compute_root();
 }
 
@@ -334,6 +356,7 @@ void filteringCost(Func I, Func p, Func meanI, Func meanP, Func inv, Func& filte
 
     Func prod("prod");
     prod(x, y, c, d) = I(x, y, c) * p(x, y, d);
+
     Func prod_m("prod_m");
     meanWithSchedule(prod, prod_m, r, d, true);
 
@@ -414,13 +437,13 @@ Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, flo
     /****************************** Schedule ****************************/
     int vector_width = 8;
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-    disp.compute_root().vectorize(x, vector_width);
+    disp.compute_root().vectorize(x, vector_width).parallel(x);
     disp_left.compute_root().vectorize(x, vector_width)
              .update().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(xi, yi, xo, yo, rd).vectorize(xi, vector_width);
 
     // filtered_left.compute_at(disp_left, rd).reorder(x, y, d).vectorize(x, vector_width);
     filtered_left.compute_at(disp_left, rd).tile(x, y, xo, yo, xi, yi, 128, 64)
-                 .reorder(xi, yi, d, xo, yo).vectorize(xi, vector_width);
+                 .reorder(xi, yi, d, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
     mean_cost.compute_at(filtered_left, d).vectorize(x, vector_width);
     cost.compute_at(filtered_left, d).vectorize(x, vector_width);
 
@@ -439,16 +462,16 @@ void guidedFilterTest()
     Image<float> im0 = Halide::Tools::load_image("../../trainingQ/Teddy/im0.png");
     Var x("x"), y("y"), c("c"), d("d");
 
-    // test mean
+    // test meanWithSchedule
     {
         Func I3, I4;
-        I3(x, y, c) = 1.0f;
-        I4(x, y, c, d) = 1.0f;
+        I3(x, y, c) = cast<float>(x + y);
+        I4(x, y, c, d) = cast<float>(x + y);
 
         Func output3, output4;
         Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-        meanWithSchedule(I3, output3, 9, xo, false, true/*scheduleI*/, false/*unroll*/);
-        meanWithSchedule(I4, output4, 9, xo, false, true/*scheduleI*/, false/*unroll*/);
+        meanWithSchedule(I3, output3, 8, xo, false, true/*scheduleI*/, false/*unroll*/);
+        meanWithSchedule(I4, output4, 8, xo, false, true/*scheduleI*/, false/*unroll*/);
 
         output3.compute_root().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, xo, yo, c).vectorize(xi, 8);
         output4.compute_root().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, xo, yo, c, d).vectorize(xi, 8);
@@ -456,15 +479,15 @@ void guidedFilterTest()
         Image<float> image3 = output3.realize(w, h, 3);
         Image<float> image4 = output4.realize(w, h, 3, 2);
 
-        for (int x = 0; x < w; x++)
+        for (int x = 9; x < w-9; x++)
         {
-            for (int y = 0; y < h; y++)
+            for (int y = 9; y < h-9; y++)
             {
                 for (int c = 0; c < 3; c++)
                 {
-                    assert(std::abs(image3(x, y, c)-1) < 0.01);
-                    assert(std::abs(image4(x, y, c, 0)-1) < 0.01);
-                    assert(std::abs(image4(x, y, c, 0)-1) < 0.01);
+                    assert(std::abs(image3(x, y, c)- x - y) < 0.01);
+                    assert(std::abs(image4(x, y, c, 0) - x - y) < 0.01);
+                    assert(std::abs(image4(x, y, c, 0) - x - y) < 0.01);
                 }
             }
         }
