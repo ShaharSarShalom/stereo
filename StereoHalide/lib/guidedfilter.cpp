@@ -15,12 +15,26 @@ void apply_default_schedule(Func F) {
     std::cout << std::endl;
 }
 
-Func mean(Func input, int r) {
+void check_inline_schedule(Func F) {
+    std::map<std::string,Internal::Function> flist = Internal::find_transitive_calls(F.function());
+    flist.insert(std::make_pair(F.name(), F.function()));
+    std::map<std::string,Internal::Function>::iterator fit;
+    for (fit=flist.begin(); fit!=flist.end(); fit++) {
+        Func f(fit->second);
+        if (fit->second.schedule().compute_level().is_inline())
+        {
+            std::cout << "Warning: applying inline schedule to " << f.name() << std::endl;
+        }
+    }
+    std::cout << std::endl;
+}
+
+Func mean(Func input, int r, bool c_innermost = false, bool schedule_input = true) {
     float scale = 1.0f/(2*r+1)/(2*r+1);
     RDom k(-r, 2*r+1);
 
     Var x("x"), y("y"), c("c"), d("d");
-    Func hsum, m;
+    Func hsum("hsum"), m("mean");
     if (input.dimensions() == 2)
     {
         hsum(x, y) = sum(input(x + k, y));
@@ -33,6 +47,20 @@ Func mean(Func input, int r) {
     else{
         hsum(x, y, c, d) = sum(input(x + k, y, c, d));
         m(x, y, c, d) = sum(hsum(x, y+k, c, d)) * scale;
+    }
+
+    /***** schedule ****/
+    hsum.compute_at(m, Var::outermost());
+    if (schedule_input)
+    {
+        input.compute_at(hsum, y);
+    }
+    if (c_innermost)
+    {
+        if (input.dimensions() == 4)
+        {
+            m.reorder(c, x, y, d);
+        }
     }
     return m;
 }
@@ -74,7 +102,7 @@ Func guidedFilter(Func I, Func p, int r, float epsilon) {
     Var x("x"), y("y"), c("c"), d("d");
     float scale = 1.0f/(2*r+1)/(2*r+1);
 
-    Func mu = mean(I, r);
+    Func mu = mean(I, r, false, false);
     Func square("square");
     Func ind2pair("ind2pair"), pair2ind("pair2ind");
     ind2pair(c) = {0,c};
@@ -120,22 +148,45 @@ Func guidedFilter(Func I, Func p, int r, float epsilon) {
     Func prod("prod");
     prod(x, y, c, d) = I(x, y, c) * p(x, y, d);
     Func prod_m = mean(prod, r);
-    Func p_m = mean(p, r);
+    Func p_m = mean(p, r, false, false);
 
-    Func temp("temp");
-    temp(x, y, c, d) = prod_m(x, y, c, d) - mu(x, y, c) * p_m(x, y, d);
+    Func a_factor("a_factor");
+    a_factor(x, y, c, d) = prod_m(x, y, c, d) - mu(x, y, c) * p_m(x, y, d);
 
-    Func a("a"), b("b");
+    Func ab("ab");
     RDom k(0, 3, "k");
-    a(x, y, c, d) = sum(inv(x, y, clamp(pair2ind(c, k), 0, 5)) * temp(x, y, k, d));
-    b(x, y, d) = p_m(x, y, d) - sum(a(x, y, k, d) * mu(x, y, k));
+    RDom rc(0, 4, "rc");
+    ab(x, y, c, d) = undef<float>();
+    ab(x, y, rc, d) = select(rc == 3,
+                            p_m(x, y, d) - ab(x, y, 0, d) * mu(x, y, 0)
+                                           - ab(x, y, 1, d) * mu(x, y, 1)
+                                           - ab(x, y, 2, d) * mu(x, y, 2),
+                            inv(x, y, clamp(pair2ind(rc, 0), 0, 5)) * a_factor(x, y, 0, d)
+                          + inv(x, y, clamp(pair2ind(rc, 1), 0, 5)) * a_factor(x, y, 1, d)
+                          + inv(x, y, clamp(pair2ind(rc, 2), 0, 5)) * a_factor(x, y, 2, d) );
 
-    Func a_m = mean(a, r);
-    Func b_m = mean(b, r);
+    Func ab_m = mean(ab, r, true/*c_innermost*/);
 
     Func q("q");
-    q(x, y, d) = sum(a_m(x, y, k, d) * I(x, y, k)) + b_m(x, y, d);
-    apply_default_schedule(q);
+    q(x, y, d) = ab_m(x, y, 3, d)
+                  + ab_m(x, y, 0, d) * I(x, y, 0)
+                  + ab_m(x, y, 1, d) * I(x, y, 1)
+                  + ab_m(x, y, 2, d) * I(x, y, 2);
+
+    ind2pair.compute_root();
+    pair2ind.compute_root();
+    ab_m.compute_at(q, Var::outermost());
+    ab.update().unroll(rc).reorder(rc, x, y, d);
+    a_factor.compute_at(ab, x);
+    prod_m.compute_at(q, Var::outermost());
+    p_m.compute_at(q, Var::outermost());
+
+    inv.compute_root().reorder(c, x, y);
+    inv_.compute_at(inv, x);
+    s_m.compute_root();
+    sigma.compute_at(inv, x);
+
+    mu.compute_root();
     return q;
 
 }
@@ -167,7 +218,8 @@ Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon
     diff(x, y, c, d) = abs(left(x, y, c) - right(x-d, y, c));
     cost_left(x, y, d) = (1 - alpha) * clamp((diff(x, y, 0, d) + diff(x, y, 1, d) + diff(x, y, 2, d))/3, 0, threshColor) +
                           alpha * clamp(abs(left_gradient(x, y) - right_gradient(x-d, y)), 0, threshGrad);
-    cost_right(x, y, d) = cost_left(x + d, y, d);
+    cost_right(x, y, d) = (1 - alpha) * clamp((diff(x+d, y, 0, d) + diff(x+d, y, 1, d) + diff(x+d, y, 2, d))/3, 0, threshColor) +
+                          alpha * clamp(abs(left_gradient(x+d, y) - right_gradient(x, y)), 0, threshGrad);
 
     Func filtered_left = guidedFilter(left, cost_left, r, epsilon);
     Func filtered_right = guidedFilter(right, cost_right, r, epsilon);
@@ -190,7 +242,24 @@ Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon
     Expr disp_val = disp_left(x, y)[0];
     disp(x, y) = select(x > disp_val && abs(disp_right(clamp(x - disp_val, 0, width-1), y)[0] - disp_val) < 1, disp_val, -1);
     // disp(x, y) = disp_left(x, y)[0];
-    apply_default_schedule(disp);
+
+    /***************** default schedule *******************/
+    disp.compute_root();
+    disp_left.compute_root()
+             .update().reorder(x, y, rd);
+    disp_right.compute_root()
+              .update().reorder(x, y, rd);
+
+    filtered_left.compute_at(disp_left, rd);
+    filtered_right.compute_at(disp_right, rd);
+    cost_left.compute_at(filtered_left, Var::outermost());
+    cost_right.compute_at(filtered_right, Var::outermost());
+
+    left_gradient.compute_root();
+    right_gradient.compute_root();
+
+    check_inline_schedule(disp);
+
     disp.compile_to_lowered_stmt("disp.html", {}, HTML);
     return disp;
 }
@@ -264,10 +333,10 @@ void meanWithSchedule(Func I, Func meanI, int r, Var compute_level, bool c_inner
 
         /*************** Schedule *******************/
         small_vsum.compute_at(I_vsum, y).vectorize(x, vector_width);
-        I_vsum.compute_at(meanI, compute_level).unroll(c).unroll(d).vectorize(x, vector_width);
+        I_vsum.compute_at(meanI, compute_level).vectorize(x, vector_width);
         if  (scheduleI)
         {
-            I.compute_at(I_vsum, y).unroll(c).unroll(d).vectorize(x, vector_width);
+            I.compute_at(I_vsum, y).vectorize(x, vector_width);
         }
         if (c_innermost)
         {
@@ -325,7 +394,7 @@ void guidanceImageProcessing(Func I, Func& meanI, Func& inv, int r, float eps)
     /****************** Schedule ********************/
     int vector_width = 8;
 
-    inv_.compute_at(inv, x).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
+    inv_.compute_at(inv, xi).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
     inv_.update().vectorize(x, vector_width);
     inv_.update(1).vectorize(x, vector_width);
     inv_.update(2).vectorize(x, vector_width);
@@ -333,8 +402,8 @@ void guidanceImageProcessing(Func I, Func& meanI, Func& inv, int r, float eps)
     inv_.update(4).vectorize(x, vector_width);
     inv_.update(5).vectorize(x, vector_width);
     inv_.update(6).vectorize(x, vector_width);
-    sigma.compute_at(inv, x).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
-    s_m.compute_at(inv, Var::outermost()).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
+    sigma.compute_at(inv, xi).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
+    s_m.compute_at(inv, xo).reorder(c, x, y).unroll(c).vectorize(x, vector_width);
 
     ind2pair.compute_root();
 }
@@ -471,21 +540,21 @@ void guidedFilterTest()
 {
     Image<float> im0 = Halide::Tools::load_image("../../trainingQ/Teddy/im0.png");
     Var x("x"), y("y"), c("c"), d("d");
+    Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
 
     // test meanWithSchedule
     {
-        Func I3, I4;
-        I3(x, y, c) = cast<float>(x + y);
-        I4(x, y, c, d) = cast<float>(x + y);
+        Func I3("I3"), I4("I4");
+        I3(x, y, c) = x+y;
+        I4(x, y, c, d) = x+y;
 
-        Func output3, output4;
-        Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-        meanWithSchedule(I3, output3, 8, xo, false, true/*scheduleI*/, false/*unroll*/);
-        meanWithSchedule(I4, output4, 8, xo, false, true/*scheduleI*/, false/*unroll*/);
+        Func output3("output3"), output4("output4");
+        meanWithSchedule(I3, output3, 9, xo, true, true/*scheduleI*/, false/*unroll*/);
+        meanWithSchedule(I4, output4, 9, xo, true, true/*scheduleI*/, false/*unroll*/);
 
-        output3.compute_root().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, xo, yo, c).vectorize(xi, 8);
-        output4.compute_root().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, xo, yo, c, d).vectorize(xi, 8);
-        int w = 1000, h = 1000;
+        output3.compute_root().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(c, xi, yi, xo, yo).vectorize(xi, 8);
+        output4.compute_root().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(c, xi, yi, xo, yo, d).vectorize(xi, 8);
+        int w = 600, h = 400;
         Image<float> image3 = output3.realize(w, h, 3);
         Image<float> image4 = output4.realize(w, h, 3, 2);
 
@@ -501,34 +570,103 @@ void guidedFilterTest()
                 }
             }
         }
-        profile(I3, w, h, 3, 1000);
     }
 
-    // Func I("I"), meanI("meanI"), inv("inv");
-    // I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-    // guidanceImageProcessing(I, meanI, inv, 9, 0.01);
-    // Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-    // inv.compile_to_lowered_stmt("inv.html", {}, HTML, t);
-    // inv.realize(im0.width(), im0.height(), 6, t);
-    // profile(inv, im0.width(), im0.height(), 6, 50);
+    {
+        Func I("I"),  meanI("meanI");
+        I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+        meanWithSchedule(I, meanI, 9, xo, true, true/*scheduleI*/, false/*unroll*/);
+        meanI.compute_root().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(c, xi, yi, xo, yo).vectorize(xi, 8);
 
-    Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
-    Func left("left"), right("right");
-    left(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-    right(x, y, c) = im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c);
-    Func disp = stereoGF_scheduled(left, right, im0.width(), im0.height(), 9, 0.01, 60, 0.9, 0.0028, 0.008);
+        meanI.compile_to_lowered_stmt("mean.html", {}, HTML);
+        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+        meanI.realize(im0.width(), im0.height(), 3, t);
+        printf("mean with schedule");
+        profile(meanI, im0.width(), im0.height(), 3, 5000);
+    }
 
-    Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-    disp.compile_to_lowered_stmt("disp.html", {}, HTML);
-    Image<int> disp_image = disp.realize(im0.width(), im0.height(), t);
+    {
+        Func I("I");
+        I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+        Func meanI = mean(I, 9);
+        meanI.compute_root();
 
-    Image<float> scaled_disp(im0.width(), im0.height());
-    for (int y = 0; y < disp_image.height(); y++) {
-        for (int x = 0; x < disp_image.width(); x++) {
-            scaled_disp(x, y) = std::min(1.f, std::max(0.f, disp_image(x,y) * 1.0f / 59));
-        }
-    };
+        meanI.compile_to_lowered_stmt("mean.html", {}, HTML);
+        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+        meanI.realize(im0.width(), im0.height(), 3, t);
+        printf("mean without schedule");
+        profile(meanI, im0.width(), im0.height(), 3, 5000);
+    }
 
-    Halide::Tools::save_image(scaled_disp, "disp.png");
-    profile(disp, im0.width(), im0.height(), 10);
+    // {
+    //     Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
+    //     Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
+    //     I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //     I1(x, y, c) = im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //     guidanceImageProcessing(I, meanI, inv, 9, 0.01);
+    //
+    //     int vector_width = 8;
+    //     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
+    //     inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
+    //     I.compute_root().vectorize(x, vector_width);
+    //     I1.compute_root().vectorize(x, vector_width);
+    //     meanI.compute_at(inv, xo).vectorize(x, vector_width);
+    //
+    //     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+    //     inv.realize(im0.width(), im0.height(), 6, t);
+    //     inv.compile_to_lowered_stmt("filter.html", {}, HTML);
+    //     profile(inv, im0.width(), im0.height(), 6, 10);
+    //
+    // }
+
+    {
+        // Func I_d("I_d"), meanI_d("meanI_d"), inv_d("inv_d");
+        // I_d(x, y, c, d) = I(x, y, c);
+        // meanI_d(x, y, c, d) = I(x, y, c);
+        // inv_d(x, y, c, d) = 1.0f;
+        //
+        // Func cost("cost"), meanCost("meanCost");
+        // cost(x, y, d) = abs(I(x, y, 0) - I1(x, y, 0)) + abs(I(x, y, 1) - I1(x, y, 1)) + abs(I(x, y, 2) - I1(x, y, 2));
+        // meanWithSchedule(cost, meanCost, 9, d, false, false);
+        //
+        // Func filtered;
+        // filteringCost(I_d, cost, meanI_d, meanCost, inv_d, filtered, 9);
+        //
+        // int vector_width = 8;
+        // filtered.compute_root().vectorize(x, vector_width);
+        // I.compute_at(filtered, d).vectorize(x, vector_width);
+        // meanI.compute_at(filtered, d).vectorize(x, vector_width);
+        // inv.compute_at(filtered, d).reorder(c, x, y).vectorize(x, vector_width);
+        // cost.compute_at(filtered, d).vectorize(x, vector_width);
+        // meanCost.compute_at(filtered, d).vectorize(x, vector_width);
+        //
+        // filtered.compile_to_lowered_stmt("filter.html", {}, HTML);
+        // Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+        // filtered.realize(im0.width(), im0.height(), 1, t);
+        // profile(filtered, im0.width(), im0.height(), 1, 50);
+
+    }
+
+    {
+        //
+        // Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
+        // Func left("left"), right("right");
+        // left(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+        // right(x, y, c) = im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c);
+        // Func disp = stereoGF_scheduled(left, right, im0.width(), im0.height(), 9, 0.01, 1, 0.9, 0.0028, 0.008);
+        //
+        // Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+        // disp.compile_to_lowered_stmt("disp.html", {}, HTML, t);
+        // Image<int> disp_image = disp.realize(im0.width(), im0.height(), t);
+        //
+        // Image<float> scaled_disp(im0.width(), im0.height());
+        // for (int y = 0; y < disp_image.height(); y++) {
+        //     for (int x = 0; x < disp_image.width(); x++) {
+        //         scaled_disp(x, y) = std::min(1.f, std::max(0.f, disp_image(x,y) * 1.0f / 59));
+        //     }
+        // };
+        //
+        // Halide::Tools::save_image(scaled_disp, "disp.png");
+        // profile(disp, im0.width(), im0.height(), 10);
+    }
 }

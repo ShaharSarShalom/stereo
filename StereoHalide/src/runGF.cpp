@@ -63,7 +63,6 @@ int main(int argc, char** argv ) {
             scaled_disp(x, y) = std::min(1.f, std::max(0.f, disp_image(x,y) * 1.0f / maxDisparity));
         }
     };
-    printf("%f\n", INFINITY);
     save_image(scaled_disp, "disp.png");
     WriteFilePFM(convertHalideImageToFloatImage<int>(disp_image, 0, im0.width(), 0, im0.height()), disp_image_name, 1.0f/maxDisparity);
 }
