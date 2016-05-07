@@ -439,33 +439,33 @@ void filteringCost(Func I, Func p, Func meanI, Func meanP, Func inv, Func& filte
     pair2ind(2, 2) = 5;
 
     Func prod("prod");
-    prod(x, y, c, d) = I(x, y, c, d) * p(x, y, d);
+    prod(x, y, c, d) = I(x, y, c) * p(x, y, d);
 
     Func prod_m("prod_m");
     meanWithSchedule(prod, prod_m, r, d, true);
 
     Func a_factor("a_factor");
-    a_factor(x, y, c, d) = prod_m(x, y, c, d) - meanI(x, y, c, d) * meanP(x, y, d);
+    a_factor(x, y, c, d) = prod_m(x, y, c, d) - meanI(x, y, c) * meanP(x, y, d);
 
     Func ab("ab");
     RDom k(0, 3, "k");
     RDom rc(0, 4, "rc");
     ab(x, y, c, d) = undef<float>();
     ab(x, y, rc, d) = select(rc == 3,
-                            meanP(x, y, d) - ab(x, y, 0, d) * meanI(x, y, 0, d)
-                                           - ab(x, y, 1, d) * meanI(x, y, 1, d)
-                                           - ab(x, y, 2, d) * meanI(x, y, 2, d),
-                            inv(x, y, clamp(pair2ind(rc, 0), 0, 5), d) * a_factor(x, y, 0, d)
-                          + inv(x, y, clamp(pair2ind(rc, 1), 0, 5), d) * a_factor(x, y, 1, d)
-                          + inv(x, y, clamp(pair2ind(rc, 2), 0, 5), d) * a_factor(x, y, 2, d) );
+                            meanP(x, y, d) - ab(x, y, 0, d) * meanI(x, y, 0)
+                                           - ab(x, y, 1, d) * meanI(x, y, 1)
+                                           - ab(x, y, 2, d) * meanI(x, y, 2),
+                            inv(x, y, clamp(pair2ind(rc, 0), 0, 5)) * a_factor(x, y, 0, d)
+                          + inv(x, y, clamp(pair2ind(rc, 1), 0, 5)) * a_factor(x, y, 1, d)
+                          + inv(x, y, clamp(pair2ind(rc, 2), 0, 5)) * a_factor(x, y, 2, d) );
 
     Func ab_m("ab_m");
     meanWithSchedule(ab, ab_m, r, d, true);
 
     filtered(x, y, d) = ab_m(x, y, 3, d)
-                      + ab_m(x, y, 0, d) * I(x, y, 0, d)
-                      + ab_m(x, y, 1, d) * I(x, y, 1, d)
-                      + ab_m(x, y, 2, d) * I(x, y, 2, d);
+                      + ab_m(x, y, 0, d) * I(x, y, 0)
+                      + ab_m(x, y, 1, d) * I(x, y, 1)
+                      + ab_m(x, y, 2, d) * I(x, y, 2);
 
     /************************** Schedule *************************/
     int vector_width = 8;
@@ -484,10 +484,12 @@ Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, flo
     Func left_gradient = gradientX(left);
     Func right_gradient = gradientX(right);
 
-    Func cost("cost");
+    Func cost_left("cost_left"), cost_right("cost_right");
     RDom rc(0, 3, "rc");
-    cost(x, y, d) = (1 - alpha) * clamp(sum(abs(left(x, y, rc) - right(x-d, y, rc)))/3, 0, threshColor) +
+    cost_left(x, y, d) = (1 - alpha) * clamp(sum(abs(left(x, y, rc) - right(x-d, y, rc)))/3, 0, threshColor) +
                           alpha * clamp(abs(left_gradient(x, y) - right_gradient(x-d, y)), 0, threshGrad);
+    cost_right(x, y, d) = (1 - alpha) * clamp(sum(abs(left(x+d, y, rc) - right(x, y, rc)))/3, 0, threshColor) +
+                          alpha * clamp(abs(left_gradient(x+d, y) - right_gradient(x, y)), 0, threshGrad);
 
     Func mean_left("mean_left"), mean_right("mean_right"), inv_left("inv_left"), inv_right("inv_right");
     meanWithSchedule(left, mean_left, r, c, false/*c_innermost*/, false/*scheduleI*/);
@@ -496,51 +498,50 @@ Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, flo
     guidanceImageProcessing(left, mean_left, inv_left, r, epsilon);
     guidanceImageProcessing(right, mean_right, inv_right, r, epsilon);
 
-    Func mean_left_4d("mean_left_4d"), mean_right_4d("mean_right_4d"), inv_left_4d("inv_left_4d"), inv_right_4d("inv_right_4d");
-    Func left_4d("left_4d"), right_4d("right_4d");
-    left_4d(x, y, c, d) = left(x, y, c);
-    right_4d(x, y, c, d) = right(x-d, y, c);
-    mean_left_4d(x, y, c, d) = mean_left(x, y, c);
-    mean_right_4d(x, y, c, d) = mean_right(x-d, y, c);
-    inv_left_4d(x, y, c, d) = inv_left(x, y, c);
-    inv_right_4d(x, y, c, d) = inv_right(x-d, y, c);
-
-    Func mean_cost("mean_cost");
-    meanWithSchedule(cost, mean_cost, r, d, false/*d innermost*/, false/*scheduleI*/);
+    Func mean_cost_left("mean_cost_left"), mean_cost_right("mean_cost_right");
+    meanWithSchedule(cost_left, mean_cost_left, r, d, false/*d innermost*/, false/*scheduleI*/);
+    meanWithSchedule(cost_right, mean_cost_right, r, d, false/*d innermost*/, false/*scheduleI*/);
 
     Func filtered_left("filtered_left"), filtered_right("filtered_right");
-    filteringCost(left_4d, cost, mean_left_4d, mean_cost, inv_left_4d, filtered_left, r);
-    filteringCost(right_4d, cost, mean_right_4d, mean_cost, inv_right_4d, filtered_right, r);
+    filteringCost(left, cost_left, mean_left, mean_cost_left, inv_left, filtered_left, r);
+    filteringCost(right, cost_right, mean_right, mean_cost_right, inv_right, filtered_right, r);
 
-    RDom rd(0, numDisparities, "rd");
-    Func disp_left_right("disp_left_right");
-    disp_left_right(x, y) = {0, INFINITY, 0, INFINITY};
-    Expr left_cond = filtered_left(x, y, rd) < disp_left_right(x, y)[1];
-    Expr right_cond = filtered_right(x+rd, y, rd) < disp_left_right(x, y)[3];
-    disp_left_right(x, y) = {
-        select(left_cond, rd, disp_left_right(x, y)[0]),
-        select(left_cond, filtered_left(x, y, rd), disp_left_right(x, y)[1]),
-        select(right_cond, rd, disp_left_right(x, y)[2]),
-        select(right_cond, filtered_right(x+rd, y, rd), disp_left_right(x, y)[3]),
-    };
+    RDom rd(0, numDisparities);
+    Func disp_left("disp_left"), disp_right("disp_right");
+    disp_left(x, y) = {0, INFINITY};
+    disp_left(x, y) = tuple_select(
+            filtered_left(x, y, rd) < disp_left(x, y)[1],
+            {rd, filtered_left(x, y, rd)},
+            disp_left(x, y));
+
+    disp_right(x, y) = {0, INFINITY};
+    disp_right(x, y) = tuple_select(
+            filtered_right(x, y, rd) < disp_right(x, y)[1],
+            {rd, filtered_right(x, y, rd)},
+            disp_right(x, y));
 
     Func disp("disp");
-    Expr disp_val = disp_left_right(x, y)[0];
-    disp(x, y) = select(x > disp_val && abs(disp_left_right(clamp(x - disp_val, 0, width-1), y)[2] - disp_val) < 1, disp_val, -1);
+    Expr disp_val = disp_left(x, y)[0];
+    // disp(x, y) = select(x > disp_val && abs(disp_right(clamp(x - disp_val, 0, width-1), y)[0] - disp_val) < 1, disp_val, -1);
+    disp(x, y) = disp_left(x, y)[0];
 
     /****************************** Schedule ****************************/
     int vector_width = 8, x_tile = 128, y_tile = 64;
     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-    disp.compute_root().vectorize(x, vector_width).parallel(x);
-    disp_left_right.compute_root().vectorize(x, vector_width)
-                   .update().tile(x, y, xo, yo, xi, yi, x_tile, y_tile).reorder(xi, yi, xo, yo, rd).vectorize(xi, vector_width);
+    disp.compute_root().vectorize(x, vector_width);
+    disp_left.compute_root().vectorize(x, vector_width)
+             .update().tile(x, y, xo, yo, xi, yi, x_tile, y_tile).reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
+    disp_right.compute_root().vectorize(x, vector_width)
+             .update().tile(x, y, xo, yo, xi, yi, x_tile, y_tile).reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width);
 
-    filtered_left.compute_at(disp_left_right, rd).tile(x, y, xo, yo, xi, yi, x_tile, y_tile)
-                 .reorder(xi, yi, d, xo, yo).vectorize(xi, vector_width);
-    filtered_right.compute_at(disp_left_right, rd).tile(x, y, xo, yo, xi, yi, x_tile, y_tile)
-                 .reorder(xi, yi, d, xo, yo).vectorize(xi, vector_width);
-    mean_cost.compute_at(disp_left_right, rd).vectorize(x, vector_width);
-    cost.compute_at(disp_left_right, rd).vectorize(x, vector_width);
+    filtered_left.compute_at(disp_left, rd).vectorize(x, vector_width);
+    filtered_right.compute_at(disp_right, rd).vectorize(x, vector_width);
+
+    mean_cost_left.compute_at(disp_left, rd).vectorize(x, vector_width);
+    cost_left.compute_at(disp_left, rd).vectorize(x, vector_width);
+
+    mean_cost_right.compute_at(disp_right, rd).vectorize(x, vector_width);
+    cost_right.compute_at(disp_right, rd).vectorize(x, vector_width);
 
     mean_left.compute_root().tile(x, y, xo, yo, xi, yi, x_tile, y_tile).reorder(xi, yi, c, xo, yo).vectorize(xi, vector_width);
     inv_left.compute_root().tile(x, y, xo, yo, xi, yi, x_tile, y_tile).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
@@ -619,90 +620,23 @@ void guidedFilterTest()
     // }
 
     // to test cost
-    {
-        Image<float> im0 = Halide::Tools::load_image("../../trainingQ/Teddy/im0.png");
-        Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
-        Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
-        I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-        I1(x, y, c) = im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-
-        Func cost("cost"), meanCost("meanCost");
-        cost(x, y, d) = abs(I(x, y, 0) - I1(x, y, 0)) + abs(I(x, y, 1) - I1(x, y, 1)) + abs(I(x, y, 2) - I1(x, y, 2));
-        meanWithSchedule(cost, meanCost, 9, d, false, true, false);
-
-        RDom rd(0, 60);
-        Func disp_left("disp_left"), disp("disp");
-        disp_left(x, y) = {0,  INFINITY};
-        disp_left(x, y) = tuple_select(
-                meanCost(x, y, rd) < disp_left(x, y)[1],
-                {rd, meanCost(x, y, rd)},
-                disp_left(x, y));
-
-        disp(x, y) = disp_left(x, y)[0];
-
-        int vector_width = 8;
-        disp.compute_root().vectorize(x, vector_width);
-        disp_left.compute_root().vectorize(x, vector_width)
-                 .update().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width);
-        meanCost.compute_at(disp_left, rd).vectorize(x, vector_width);
-        I.compute_root().vectorize(x, vector_width);
-        I1.compute_root().vectorize(x, vector_width);
-
-        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-
-        disp.compile_to_lowered_stmt("cost.html", {}, HTML);
-        disp.realize(im0.width(), im0.height(), t);
-        profile(disp, im0.width(), im0.height(), 100);
-    }
-
-    //test guidanceImageProcessing
-    // Image<float> inv_image;
-    // Image<float> meanI_image;
     // {
-    //     Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
-    //     I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-    //     meanWithSchedule(I, meanI, 9, Var::outermost(), false, false, false);
-    //     guidanceImageProcessing(I, meanI, inv, 9, 0.01);
-    //
-    //     int vector_width = 8;
-    //     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-    //     inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
-    //     I.compute_root().vectorize(x, vector_width);
-    //     meanI.compute_at(inv, xo).vectorize(x, vector_width);
-    //
-    //     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-    //     inv_image = inv.realize(im0.width(), im0.height(), 6, t);
-    //     inv.compile_to_lowered_stmt("guidance.html", {}, HTML);
-    //     profile(inv, im0.width(), im0.height(), 6, 100);
-    //
-    //     meanI_image = meanI.realize(im0.width(), im0.height(), 3);
-    // }
-    //
-    // {
+    //     Image<float> im0 = Halide::Tools::load_image("../../trainingQ/Teddy/im0.png");
+    //     Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
     //     Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
     //     I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
     //     I1(x, y, c) = im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-    //     meanI(x, y, c) = meanI_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-    //     inv(x, y, c) = inv_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-    //
-    //     Func I_d("I_d"), meanI_d("meanI_d"), inv_d("inv_d");
-    //     I_d(x, y, c, d) = I(x, y, c);
-    //     meanI_d(x, y, c, d) = I(x, y, c);
-    //     inv_d(x, y, c, d) = inv(x, y, c);
     //
     //     Func cost("cost"), meanCost("meanCost");
     //     cost(x, y, d) = abs(I(x, y, 0) - I1(x, y, 0)) + abs(I(x, y, 1) - I1(x, y, 1)) + abs(I(x, y, 2) - I1(x, y, 2));
-    //     meanWithSchedule(cost, meanCost, 9, d, false, false, false);
-    //
-    //     Func filtered("filtered");
-    //     filteringCost(I_d, cost, meanI_d, meanCost, inv_d, filtered, 9);
+    //     meanWithSchedule(cost, meanCost, 9, d, false, true, false);
     //
     //     RDom rd(0, 60);
     //     Func disp_left("disp_left"), disp("disp");
-    //     disp_left(x, y) = {0, INFINITY};
+    //     disp_left(x, y) = {0,  INFINITY};
     //     disp_left(x, y) = tuple_select(
-    //             filtered(x, y, rd) < disp_left(x, y)[1],
-    //             {rd, filtered(x, y, rd)},
+    //             meanCost(x, y, rd) < disp_left(x, y)[1],
+    //             {rd, meanCost(x, y, rd)},
     //             disp_left(x, y));
     //
     //     disp(x, y) = disp_left(x, y)[0];
@@ -711,42 +645,104 @@ void guidedFilterTest()
     //     disp.compute_root().vectorize(x, vector_width);
     //     disp_left.compute_root().vectorize(x, vector_width)
     //              .update().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width);
-    //     filtered.compute_at(disp_left, rd).vectorize(x, vector_width);
-    //
-    //     inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
+    //     meanCost.compute_at(disp_left, rd).vectorize(x, vector_width);
     //     I.compute_root().vectorize(x, vector_width);
     //     I1.compute_root().vectorize(x, vector_width);
-    //     meanI.compute_at(inv, xo).vectorize(x, vector_width);
     //
-    //     cost.compute_at(filtered, d).vectorize(x, vector_width);
-    //     meanCost.compute_at(filtered, d).vectorize(x, vector_width);
-    //
-    //     disp.compile_to_lowered_stmt("filter.html", {}, HTML);
     //     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+    //
+    //     disp.compile_to_lowered_stmt("cost.html", {}, HTML);
     //     disp.realize(im0.width(), im0.height(), t);
-    //     profile(disp, im0.width(), im0.height(), 10);
+    //     profile(disp, im0.width(), im0.height(), 100);
     // }
 
+    //test guidanceImageProcessing
+    Image<float> inv_image;
+    Image<float> meanI_image;
     {
-        //
-        // Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
-        // Func left("left"), right("right");
-        // left(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-        // right(x, y, c) = im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c);
-        // Func disp = stereoGF_scheduled(left, right, im0.width(), im0.height(), 9, 0.01, 1, 0.9, 0.0028, 0.008);
-        //
-        // Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-        // disp.compile_to_lowered_stmt("disp.html", {}, HTML, t);
-        // Image<int> disp_image = disp.realize(im0.width(), im0.height(), t);
-        //
-        // Image<float> scaled_disp(im0.width(), im0.height());
-        // for (int y = 0; y < disp_image.height(); y++) {
-        //     for (int x = 0; x < disp_image.width(); x++) {
-        //         scaled_disp(x, y) = std::min(1.f, std::max(0.f, disp_image(x,y) * 1.0f / 59));
-        //     }
-        // };
-        //
-        // Halide::Tools::save_image(scaled_disp, "disp.png");
-        // profile(disp, im0.width(), im0.height(), 10);
+        Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
+        I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+        meanWithSchedule(I, meanI, 9, Var::outermost(), false, false, false);
+        guidanceImageProcessing(I, meanI, inv, 9, 0.01);
+
+        int vector_width = 8;
+        Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
+        inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
+        I.compute_root().vectorize(x, vector_width);
+        meanI.compute_at(inv, xo).vectorize(x, vector_width);
+
+        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+        inv_image = inv.realize(im0.width(), im0.height(), 6, t);
+        inv.compile_to_lowered_stmt("guidance.html", {}, HTML);
+        profile(inv, im0.width(), im0.height(), 6, 100);
+
+        meanI_image = meanI.realize(im0.width(), im0.height(), 3);
+    }
+
+    {
+        Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
+        I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+        I1(x, y, c) = im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+        meanI(x, y, c) = meanI_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+        inv(x, y, c) = inv_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+
+        Func cost("cost"), meanCost("meanCost");
+        cost(x, y, d) = abs(I(x, y, 0) - I1(x, y, 0)) + abs(I(x, y, 1) - I1(x, y, 1)) + abs(I(x, y, 2) - I1(x, y, 2));
+        meanWithSchedule(cost, meanCost, 9, d, false, false, false);
+
+        Func filtered("filtered");
+        filteringCost(I, cost, meanI, meanCost, inv, filtered, 9);
+
+        RDom rd(0, 60);
+        Func disp_left("disp_left"), disp("disp");
+        disp_left(x, y) = {0, INFINITY};
+        disp_left(x, y) = tuple_select(
+                filtered(x, y, rd) < disp_left(x, y)[1],
+                {rd, filtered(x, y, rd)},
+                disp_left(x, y));
+
+        disp(x, y) = disp_left(x, y)[0];
+
+        int vector_width = 8;
+        disp.compute_root().vectorize(x, vector_width);
+        disp_left.compute_root().vectorize(x, vector_width)
+                 .update().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
+        filtered.compute_at(disp_left, rd).vectorize(x, vector_width);
+
+        inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
+        I.compute_root().vectorize(x, vector_width);
+        I1.compute_root().vectorize(x, vector_width);
+        meanI.compute_root().vectorize(x, vector_width);
+
+        cost.compute_at(filtered, d).vectorize(x, vector_width);
+        meanCost.compute_at(filtered, d).vectorize(x, vector_width);
+
+        disp.compile_to_lowered_stmt("filter.html", {}, HTML);
+        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+        disp.realize(im0.width(), im0.height(), t);
+        profile(disp, im0.width(), im0.height(), 10);
+    }
+
+    {
+
+        Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
+        Func left("left"), right("right");
+        left(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+        right(x, y, c) = im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c);
+        Func disp = stereoGF(left, right, im0.width(), im0.height(), 9, 0.01, 60, 0.9, 0.0028, 0.008);
+
+        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+        disp.compile_to_lowered_stmt("disp.html", {}, HTML, t);
+        Image<int> disp_image = disp.realize(im0.width(), im0.height(), t);
+
+        Image<float> scaled_disp(im0.width(), im0.height());
+        for (int y = 0; y < disp_image.height(); y++) {
+            for (int x = 0; x < disp_image.width(); x++) {
+                scaled_disp(x, y) = std::min(1.f, std::max(0.f, disp_image(x,y) * 1.0f / 59));
+            }
+        };
+
+        Halide::Tools::save_image(scaled_disp, "disp.png");
+        profile(disp, im0.width(), im0.height(), 10);
     }
 }
