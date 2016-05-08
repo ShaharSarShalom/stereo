@@ -478,6 +478,106 @@ void filteringCost(Func I, Func p, Func meanI, Func meanP, Func inv, Func& filte
     pair2ind.compute_root();
 }
 
+void meanFast(Func I, Func& meanI, int r, int x_tile_size, int y_tile_size)
+{
+    Var xi("xi"), yi("yi"), xo("xo"), yo("yo"), c("c"), d("d");
+    float scale = 1.0f/((2*r+1)*(2*r+1));
+    RDom rk(-r, 2*r+1, "rk");
+    RDom rxi(1, x_tile_size - 1, "rxi"), ryi(1, y_tile_size - 1, "ryi");
+    Func vsum("vsum");
+    if (I.dimensions() == 5)
+    {
+        vsum(xi, yi, xo, yo, d) = select(yi != 0, 0, sum(I(xi, rk, xo, yo, d)));
+        vsum(xi, ryi, xo, yo, d) = vsum(xi, ryi-1, xo, yo, d) + I(xi, ryi+r, xo, yo, d) - I(xi, ryi-r-1, xo, yo, d);
+
+        meanI(xi, yi, xo, yo, d) = sum(vsum(xi+rk, yi, xo, yo, d));
+
+        /* schedule */
+        int vector_width = 8;
+        vsum.compute_at(meanI, d).vectorize(xi, vector_width)
+            .update().reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
+    }
+    else
+    {
+        vsum(xi, yi, xo, yo, c, d) = select(yi != 0, 0.0f, sum(I(xi, rk, xo, yo, c, d)));
+        vsum(xi, ryi, xo, yo, c, d) = vsum(xi, ryi-1, xo, yo, c, d) + I(xi, ryi+r, xo, yo, c, d) - I(xi, ryi-r-1, xo, yo, c, d);
+
+        meanI(xi, yi, xo, yo, c, d) = sum(vsum(xi+rk, yi, xo, yo, c, d)) * scale;
+
+        /* schedule */
+        int vector_width = 8;
+        vsum.compute_at(meanI, d).vectorize(xi, vector_width)
+            .update().reorder(xi, ryi, xo, yo, c, d).vectorize(xi, vector_width);
+    }
+}
+
+void filteringCostFast(Func I, Func p, Func meanI, Func meanP, Func inv, Func& filtered, int r, int x_tile_size, int y_tile_size)
+{
+    Var xi("xi"), yi("yi"), xo("xo"), yo("yo"), c("c"), d("d");
+    Func pair2ind("pair2ind");
+    pair2ind(c, d) = undef<int>();
+    pair2ind(0, 0) = 0;
+    pair2ind(0, 1) = 1;
+    pair2ind(0, 2) = 2;
+    pair2ind(1, 0) = 1;
+    pair2ind(1, 1) = 3;
+    pair2ind(1, 2) = 4;
+    pair2ind(2, 0) = 2;
+    pair2ind(2, 1) = 4;
+    pair2ind(2, 2) = 5;
+
+    Func prod("prod");
+    Expr x = xi + xo * x_tile_size;
+    Expr y = yi + yo * y_tile_size;
+    prod(xi, yi, xo, yo, c, d) = I(x, y, c) * p(xi, yi, xo, yo, d);
+
+    Func prod_m("prod_m");
+    meanFast(prod, prod_m, r, x_tile_size, y_tile_size);
+
+    Func a_factor("a_factor");
+    a_factor(xi, yi, xo, yo, c, d) = prod_m(xi, yi, xo, yo, c, d) - meanI(x, y, c) * meanP(xi, yi, xo, yo, d);
+
+    Func ab("ab");
+    RDom k(0, 3, "k");
+    RDom rc(0, 4, "rc");
+    ab(xi, yi, xo, yo, c, d) = undef<float>();
+    ab(xi, yi, xo, yo, rc, d) = select(rc == 3,
+                            meanP(xi, yi, xo, yo, d) - ab(xi, yi, xo, yo, 0, d) * meanI(x, y, 0)
+                                           - ab(xi, yi, xo, yo, 1, d) * meanI(x, y, 1)
+                                           - ab(xi, yi, xo, yo, 2, d) * meanI(x, y, 2),
+                            inv(x, y, clamp(pair2ind(rc, 0), 0, 5)) * a_factor(xi, yi, xo, yo, 0, d)
+                          + inv(x, y, clamp(pair2ind(rc, 1), 0, 5)) * a_factor(xi, yi, xo, yo, 1, d)
+                          + inv(x, y, clamp(pair2ind(rc, 2), 0, 5)) * a_factor(xi, yi, xo, yo, 2, d) );
+
+    Func ab_m("ab_m");
+    float scale = 1.0f/((2*r+1)*(2*r+1));
+    RDom rk(-r, 2*r+1, "rk");
+    RDom rxi(1, x_tile_size - 1, "rxi"), ryi(1, y_tile_size - 1, "ryi");
+    Func vsum("vsum");
+
+    vsum(xi, yi, xo, yo, c, d) = select(yi != 0, 0.0f, sum(ab(xi, rk, xo, yo, c, d)));
+    vsum(xi, ryi, xo, yo, c, d) = vsum(xi, ryi-1, xo, yo, c, d) + ab(xi, ryi+r, xo, yo, c, d) - ab(xi, ryi-r-1, xo, yo, c, d);
+
+    ab_m(xi, yi, xo, yo, c, d) = sum(vsum(xi+rk, yi, xo, yo, c, d)) * scale;
+
+    filtered(xi, yi, xo, yo, d) = ab_m(xi, yi, xo, yo, 3, d)
+                      + ab_m(xi, yi, xo, yo, 0, d) * I(x, y, 0)
+                      + ab_m(xi, yi, xo, yo, 1, d) * I(x, y, 1)
+                      + ab_m(xi, yi, xo, yo, 2, d) * I(x, y, 2);
+
+    // schedule
+    int vector_width = 8;
+    vsum.compute_at(filtered, d).vectorize(xi, vector_width)
+        .update().reorder(c, xi, ryi, xo, yo, d).unroll(c).unroll(d).vectorize(xi, vector_width);
+    ab.compute_at(filtered, d).vectorize(xi, vector_width)
+      .update().reorder(rc, xi, yi, xo, yo, d).unroll(rc).vectorize(xi, vector_width);
+    a_factor.compute_at(ab, xi).reorder(c, xi, yi, xo, yo, d).unroll(c).unroll(d).vectorize(xi, vector_width);
+
+    prod_m.compute_at(filtered, d).reorder(xi, yi, d, c, xo, yo).unroll(c).unroll(d).vectorize(xi, vector_width);
+    prod.compute_inline();
+    pair2ind.compute_root();
+}
+
 Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, float epsilon, int numDisparities, float alpha, float threshColor, float threshGrad)
 {
     Var x("x"), y("y"), c("c"), d("d");
@@ -620,23 +720,147 @@ void guidedFilterTest()
     // }
 
     // to test cost
+    {
+        Image<uint8_t> im0 = Halide::Tools::load_image("../../trainingQ/Teddy/im0.png");
+        Image<uint8_t> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
+        Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
+        I(x, y, c) = cast<short>(im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c));
+        I1(x, y, c) = cast<short>(im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c));
+
+        Func cost("cost"), meanCost("meanCost");
+        cost(x, y, d) = abs(I(x, y, 0) - I1(x-d, y, 0)) + abs(I(x, y, 1) - I1(x-d, y, 1)) + abs(I(x, y, 2) - I1(x-d, y, 2));
+        meanWithSchedule(cost, meanCost, 9, d, false, false, false);
+
+        RDom rd(0, 60);
+        Func disp_left("disp_left"), disp("disp");
+        disp_left(x, y) = {cast<ushort>(0), INFINITY};
+        disp_left(x, y) = tuple_select(
+                meanCost(x, y, rd) < disp_left(x, y)[1],
+                {cast<ushort>(rd), meanCost(x, y, rd)},
+                disp_left(x, y));
+
+        disp(x, y) = disp_left(x, y)[0];
+
+        int vector_width = 8;
+        disp.compute_root().tile(x, y, xo, yo, xi, yi, 128, 64).vectorize(xi, vector_width).parallel(yo).parallel(xo);
+        disp_left.compute_at(disp, xo).vectorize(x, vector_width)
+                 .update().reorder(x, y, rd).vectorize(x, vector_width);
+        meanCost.compute_at(disp_left, rd).vectorize(x, vector_width);
+        cost.compute_at(disp_left, rd).vectorize(x, vector_width);
+        I.compute_root().vectorize(x, vector_width);
+        I1.compute_root().vectorize(x, vector_width);
+
+        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+
+        disp.compile_to_lowered_stmt("cost.html", {}, HTML);
+        disp.realize(im0.width(), im0.height(), t);
+        profile(disp, im0.width(), im0.height(), 100);
+    }
+
+    {
+        int x_tile_size = 128, y_tile_size = 64;
+        Image<uint8_t> im0 = Halide::Tools::load_image("../../trainingQ/Teddy/im0.png");
+        Image<uint8_t> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
+        Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
+        I(x, y, c) = cast<short>(im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c));
+        I1(x, y, c) = cast<short>(im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c));
+        // Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
+        // I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+        // I1(x, y, c) = im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+
+        Func cost("cost"), cost_("cost_"), meanCost("meanCost");
+        cost_(x, y, d) = abs(I(x, y, 0) - I1(x-d, y, 0)) +  abs(I(x, y, 1) - I1(x-d, y, 1)) + abs(I(x, y, 2) - I1(x-d, y, 2))  ;
+        cost(xi, yi, xo, yo, d) = cost_(xi + xo * x_tile_size, yi + yo * y_tile_size, d);
+
+        int r = 9;
+        RDom rk(-r, 2*r+1, "rk");
+        RDom rxi(1, x_tile_size - 1, "rxi"), ryi(1, y_tile_size - 1, "ryi");
+        Func vsum("vsum");
+        vsum(xi, yi, xo, yo, d) = select(yi != 0, 0, sum(cost(xi, rk, xo, yo, d)));
+        vsum(xi, ryi, xo, yo, d) = vsum(xi, ryi-1, xo, yo, d) + cost(xi, ryi+r, xo, yo, d) - cost(xi, ryi-r-1, xo, yo, d);
+
+        // Func h("h");
+        // h(xi, xo, yo, d) = 0.0f;
+        // h()
+        // vsum(xi, yi, xo, yo, d) = undef<float>();
+        // vsum(xi, 0, xo, yo, d) =
+        // meanCost(xi, yi, xo, yo, d) = select(xi != 0, 0, sum(vsum(rk, yi, xo, yo, d)));
+        // meanCost(xi, ryi, xo, yo, d) = meanCost(xi, ryi-1, xo, yo, d) + vsum(xi, ryi+r, xo, yo, d) - vsum(xi, ryi-r-1, xo, yo, d);
+        meanCost(xi, yi, xo, yo, d) = sum(vsum(xi + rk, yi, xo, yo, d));
+
+        RDom rd(0, 60);
+        Func disp_left("disp_left"), disp("disp");
+        disp_left(xi, yi, xo, yo) = {cast<ushort>(0), cast<ushort>((2<<16)-1)};
+        disp_left(xi, yi, xo, yo) = tuple_select(
+            meanCost(xi, yi, xo, yo, rd) < disp_left(xi, yi, xo, yo)[1],
+            {cast<ushort>(rd), meanCost(xi, yi, xo, yo, rd)},
+            disp_left(xi, yi, xo, yo));
+
+        disp(x, y) = disp_left(x%x_tile_size, y%y_tile_size, x/x_tile_size, y/y_tile_size)[0];
+
+        int vector_width = 8;
+        disp.compute_root().tile(x, y, xo, yo, xi, yi, x_tile_size, y_tile_size).reorder(xi, yi, xo, yo)
+            .vectorize(xi, vector_width).parallel(yo).parallel(xo);
+        disp_left.compute_at(disp, xo).reorder(xi, yi, xo, yo)    .vectorize(xi, vector_width)
+                 .update()            .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width);
+        meanCost.compute_at(disp_left, rd).vectorize(xi, vector_width);
+            // .update().reorder(xi, ryi, xo, yo, d).vectorize(xi, 8);
+        vsum.compute_at(disp_left, rd).vectorize(xi, vector_width)
+            .update().reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
+        cost.compute_at(disp_left, rd).vectorize(xi, vector_width);
+        I.compute_root().tile(x, y, xo, yo, xi, yi, 64, 32).parallel(yo).parallel(xo);
+        I1.compute_root().tile(x, y, xo, yo, xi, yi, 64, 32).parallel(yo).parallel(xo);
+
+        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+
+        disp.compile_to_lowered_stmt("cost.html", {}, HTML);
+        disp.realize(im0.width(), im0.height(), t);
+        profile(disp, im0.width(), im0.height(), 100);
+    }
+
+    //test guidanceImageProcessing
+    // Image<float> inv_image;
+    // Image<float> meanI_image;
     // {
-    //     Image<float> im0 = Halide::Tools::load_image("../../trainingQ/Teddy/im0.png");
-    //     Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
+    //     Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
+    //     I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //     meanWithSchedule(I, meanI, 9, Var::outermost(), false, false, false);
+    //     guidanceImageProcessing(I, meanI, inv, 9, 0.01);
+    //
+    //     int vector_width = 8;
+    //     Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
+    //     inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
+    //     I.compute_root().vectorize(x, vector_width);
+    //     meanI.compute_at(inv, xo).vectorize(x, vector_width);
+    //
+    //     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+    //     inv_image = inv.realize(im0.width(), im0.height(), 6, t);
+    //     inv.compile_to_lowered_stmt("guidance.html", {}, HTML);
+    //     profile(inv, im0.width(), im0.height(), 6, 100);
+    //
+    //     meanI_image = meanI.realize(im0.width(), im0.height(), 3);
+    // }
+    //
+    // {
     //     Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
     //     I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
     //     I1(x, y, c) = im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //     meanI(x, y, c) = meanI_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //     inv(x, y, c) = inv_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
     //
     //     Func cost("cost"), meanCost("meanCost");
     //     cost(x, y, d) = abs(I(x, y, 0) - I1(x, y, 0)) + abs(I(x, y, 1) - I1(x, y, 1)) + abs(I(x, y, 2) - I1(x, y, 2));
-    //     meanWithSchedule(cost, meanCost, 9, d, false, true, false);
+    //     meanWithSchedule(cost, meanCost, 9, d, false, false, false);
+    //
+    //     Func filtered("filtered");
+    //     filteringCost(I, cost, meanI, meanCost, inv, filtered, 9);
     //
     //     RDom rd(0, 60);
     //     Func disp_left("disp_left"), disp("disp");
-    //     disp_left(x, y) = {0,  INFINITY};
+    //     disp_left(x, y) = {0, INFINITY};
     //     disp_left(x, y) = tuple_select(
-    //             meanCost(x, y, rd) < disp_left(x, y)[1],
-    //             {rd, meanCost(x, y, rd)},
+    //             filtered(x, y, rd) < disp_left(x, y)[1],
+    //             {rd, filtered(x, y, rd)},
     //             disp_left(x, y));
     //
     //     disp(x, y) = disp_left(x, y)[0];
@@ -644,105 +868,90 @@ void guidedFilterTest()
     //     int vector_width = 8;
     //     disp.compute_root().vectorize(x, vector_width);
     //     disp_left.compute_root().vectorize(x, vector_width)
-    //              .update().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width);
-    //     meanCost.compute_at(disp_left, rd).vectorize(x, vector_width);
+    //              .update().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
+    //     filtered.compute_at(disp_left, rd).vectorize(x, vector_width);
+    //
+    //     inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
     //     I.compute_root().vectorize(x, vector_width);
     //     I1.compute_root().vectorize(x, vector_width);
+    //     meanI.compute_root().vectorize(x, vector_width);
     //
+    //     cost.compute_at(filtered, d).vectorize(x, vector_width);
+    //     meanCost.compute_at(filtered, d).vectorize(x, vector_width);
+    //
+    //     disp.compile_to_lowered_stmt("filter.html", {}, HTML);
     //     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-    //
-    //     disp.compile_to_lowered_stmt("cost.html", {}, HTML);
     //     disp.realize(im0.width(), im0.height(), t);
-    //     profile(disp, im0.width(), im0.height(), 100);
+    //     profile(disp, im0.width(), im0.height(), 10);
+    // }
+    //
+    // {
+    //     int x_tile_size = 128, y_tile_size = 64;
+    //     Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
+    //     I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //     I1(x, y, c) = im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //     meanI(x, y, c) = meanI_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //     inv(x, y, c) = inv_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //
+    //     Func cost_("cost_"), cost("cost"), meanCost("meanCost");
+    //     cost_(x, y, d) = abs(I(x, y, 0) - I1(x, y, 0)) + abs(I(x, y, 1) - I1(x, y, 1)) + abs(I(x, y, 2) - I1(x, y, 2));
+    //     cost(xi, yi, xo, yo, d) = cost_(xi + xo * x_tile_size, yi + yo * y_tile_size, d);
+    //
+    //     meanFast(cost, meanCost, 9, x_tile_size, y_tile_size);
+    //
+    //     Func filtered("filtered");
+    //     filteringCostFast(I, cost, meanI, meanCost, inv, filtered, 9, x_tile_size, y_tile_size);
+    //
+    //     RDom rd(0, 60);
+    //     Func disp_left("disp_left"), disp("disp");
+    //     disp_left(xi, yi, xo, yo) = {0, INFINITY};
+    //     disp_left(xi, yi, xo, yo) = tuple_select(
+    //             filtered(xi, yi, xo, yo, rd) < disp_left(xi, yi, xo, yo)[1],
+    //             {rd, filtered(xi, yi, xo, yo, rd)},
+    //             disp_left(xi, yi, xo, yo));
+    //
+    //     disp(x, y) = disp_left(x%x_tile_size, y%y_tile_size, x/x_tile_size, y/y_tile_size)[0];
+    //
+    //     int vector_width = 8;
+    //     disp.compute_root().vectorize(x, vector_width);
+    //     disp_left.compute_root().vectorize(xi, vector_width)
+    //              .update().reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width);
+    //     filtered.compute_at(disp_left, rd).vectorize(xi, vector_width);
+    //
+    //     inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
+    //     I.compute_root().vectorize(x, vector_width);
+    //     I1.compute_root().vectorize(x, vector_width);
+    //     meanI.compute_root().vectorize(x, vector_width);
+    //
+    //     cost.compute_at(filtered, d).vectorize(xi, vector_width);
+    //     meanCost.compute_at(filtered, d).vectorize(xi, vector_width);
+    //
+    //     disp.compile_to_lowered_stmt("filter.html", {}, HTML);
+    //     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+    //     disp.realize(im0.width(), im0.height(), t);
+    //     profile(disp, im0.width(), im0.height(), 10);
     // }
 
-    //test guidanceImageProcessing
-    Image<float> inv_image;
-    Image<float> meanI_image;
-    {
-        Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
-        I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-        meanWithSchedule(I, meanI, 9, Var::outermost(), false, false, false);
-        guidanceImageProcessing(I, meanI, inv, 9, 0.01);
-
-        int vector_width = 8;
-        Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-        inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
-        I.compute_root().vectorize(x, vector_width);
-        meanI.compute_at(inv, xo).vectorize(x, vector_width);
-
-        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-        inv_image = inv.realize(im0.width(), im0.height(), 6, t);
-        inv.compile_to_lowered_stmt("guidance.html", {}, HTML);
-        profile(inv, im0.width(), im0.height(), 6, 100);
-
-        meanI_image = meanI.realize(im0.width(), im0.height(), 3);
-    }
-
-    {
-        Func I("I"), I1("I1"), meanI("meanI"), inv("inv");
-        I(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-        I1(x, y, c) = im1(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-        meanI(x, y, c) = meanI_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-        inv(x, y, c) = inv_image(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-
-        Func cost("cost"), meanCost("meanCost");
-        cost(x, y, d) = abs(I(x, y, 0) - I1(x, y, 0)) + abs(I(x, y, 1) - I1(x, y, 1)) + abs(I(x, y, 2) - I1(x, y, 2));
-        meanWithSchedule(cost, meanCost, 9, d, false, false, false);
-
-        Func filtered("filtered");
-        filteringCost(I, cost, meanI, meanCost, inv, filtered, 9);
-
-        RDom rd(0, 60);
-        Func disp_left("disp_left"), disp("disp");
-        disp_left(x, y) = {0, INFINITY};
-        disp_left(x, y) = tuple_select(
-                filtered(x, y, rd) < disp_left(x, y)[1],
-                {rd, filtered(x, y, rd)},
-                disp_left(x, y));
-
-        disp(x, y) = disp_left(x, y)[0];
-
-        int vector_width = 8;
-        disp.compute_root().vectorize(x, vector_width);
-        disp_left.compute_root().vectorize(x, vector_width)
-                 .update().tile(x, y, xo, yo, xi, yi, 128, 64).reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width).parallel(xo).parallel(yo);
-        filtered.compute_at(disp_left, rd).vectorize(x, vector_width);
-
-        inv.compute_root().tile(x, y, xo, yo, xi, yi, 32, 32).reorder(c, xi, yi, xo, yo).vectorize(xi, vector_width);
-        I.compute_root().vectorize(x, vector_width);
-        I1.compute_root().vectorize(x, vector_width);
-        meanI.compute_root().vectorize(x, vector_width);
-
-        cost.compute_at(filtered, d).vectorize(x, vector_width);
-        meanCost.compute_at(filtered, d).vectorize(x, vector_width);
-
-        disp.compile_to_lowered_stmt("filter.html", {}, HTML);
-        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-        disp.realize(im0.width(), im0.height(), t);
-        profile(disp, im0.width(), im0.height(), 10);
-    }
-
-    {
-
-        Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
-        Func left("left"), right("right");
-        left(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
-        right(x, y, c) = im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c);
-        Func disp = stereoGF(left, right, im0.width(), im0.height(), 9, 0.01, 60, 0.9, 0.0028, 0.008);
-
-        Target t = get_jit_target_from_environment().with_feature(Target::Profile);
-        disp.compile_to_lowered_stmt("disp.html", {}, HTML, t);
-        Image<int> disp_image = disp.realize(im0.width(), im0.height(), t);
-
-        Image<float> scaled_disp(im0.width(), im0.height());
-        for (int y = 0; y < disp_image.height(); y++) {
-            for (int x = 0; x < disp_image.width(); x++) {
-                scaled_disp(x, y) = std::min(1.f, std::max(0.f, disp_image(x,y) * 1.0f / 59));
-            }
-        };
-
-        Halide::Tools::save_image(scaled_disp, "disp.png");
-        profile(disp, im0.width(), im0.height(), 10);
-    }
+    // {
+    //
+    //     Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
+    //     Func left("left"), right("right");
+    //     left(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    //     right(x, y, c) = im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c);
+    //     Func disp = stereoGF(left, right, im0.width(), im0.height(), 9, 0.01, 60, 0.9, 0.0028, 0.008);
+    //
+    //     Target t = get_jit_target_from_environment().with_feature(Target::Profile);
+    //     disp.compile_to_lowered_stmt("disp.html", {}, HTML, t);
+    //     Image<int> disp_image = disp.realize(im0.width(), im0.height(), t);
+    //
+    //     Image<float> scaled_disp(im0.width(), im0.height());
+    //     for (int y = 0; y < disp_image.height(); y++) {
+    //         for (int x = 0; x < disp_image.width(); x++) {
+    //             scaled_disp(x, y) = std::min(1.f, std::max(0.f, disp_image(x,y) * 1.0f / 59));
+    //         }
+    //     };
+    //
+    //     Halide::Tools::save_image(scaled_disp, "disp.png");
+    //     profile(disp, im0.width(), im0.height(), 10);
+    // }
 }
