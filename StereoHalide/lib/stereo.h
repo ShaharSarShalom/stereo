@@ -14,5 +14,6 @@ Func guidedFilter_gray(Func I, Func p, int r, float epsilon);
 Func guidedFilter(Func I, Func p, int r, float epsilon);
 Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon, int numDisparities, float alpha, float threshColor, float threshGrad);
 Func stereoGF_scheduled(Func left, Func right, int width, int height, int r, float epsilon, int numDisparities, float alpha, float threshColor, float threshGrad);
+Func stereoGF_fast(Func left, Func right, int width, int height, int r, float epsilon, int numDisparities, float alpha, float threshColor, float threshGrad);
 
 void guidedFilterTest();

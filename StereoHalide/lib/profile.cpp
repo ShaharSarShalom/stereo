@@ -14,6 +14,7 @@ unsigned long millisecond_timer(void) {
 float profile(Func myFunc, int w, int h, int n_times) {
     myFunc.compile_jit();
 
+    myFunc.realize(w,h);
     unsigned long s = millisecond_timer();
     for (int i=0; i<n_times; i++) {
         myFunc.realize(w,h);
@@ -30,6 +31,7 @@ float profile(Func myFunc, int w, int h, int n_times) {
 float profile(Func myFunc, int w, int h, int c, int n_times) {
     myFunc.compile_jit();
 
+    myFunc.realize(w, h, c);
     unsigned long s = millisecond_timer();
     for (int i=0; i<n_times; i++) {
         myFunc.realize(w,h,c);
@@ -41,4 +43,20 @@ float profile(Func myFunc, int w, int h, int c, int n_times) {
         << " throughput " << (mpixels*n_times)/(total_time/1000) << " megapixels/sec" << std::endl;
 
     return total_time/n_times;
+}
+
+float profile(Func myFunc, Buffer buf, int n_times)
+{
+    myFunc.realize(buf);
+    unsigned long s = millisecond_timer();
+    for (int i=0; i<n_times; i++) {
+        myFunc.realize(buf);
+    }
+    buf.copy_to_host();
+    float total_time = float(millisecond_timer()-s);
+
+    std::cout << "runtime " << total_time/n_times << " ms " << std::endl;
+
+    return total_time/n_times;
+
 }
