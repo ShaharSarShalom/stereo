@@ -95,7 +95,7 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
     // Schedule
     if (useGPU)
     {
-        Var x_thread, y_thread;
+        Var x_thread("x_thread"), y_thread("y_thread");
         // disp.compute_root().tile(x, y, xo, yo, xi, yi, x_tile_size, y_tile_size)
         //     .tile(xi, yi, x_thread, y_thread, xi, yi, x_tile_size/16, y_tile_size/16)
         //     .gpu_blocks(xo, yo).gpu_threads(x_thread, y_thread);
@@ -136,12 +136,15 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
         cSAD     .reorder_storage(xi, yi, xo, yo, d);
 
         disp_left.compute_at(disp, xo).reorder(xi, yi, xo, yo)    .vectorize(xi, vector_width)
-        .update()            .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width);
+                 .update()            .reorder(xi, yi, rd, xo, yo).vectorize(xi, vector_width);
 
         cSAD.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width);
         vsum.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
-        .update()                 .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
-        disp.compile_to_lowered_stmt("disp.html", {}, HTML);
+            .update()                 .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
+        Target target = get_jit_target_from_environment();
+        target.set_feature(Target::SSE41);
+        disp.compile_jit(target);
+        disp.compile_to_lowered_stmt("disp.html", {}, HTML, target);
     }
 
     return disp;
@@ -160,9 +163,20 @@ Image<ushort> stereoBM(Image<uint8_t> left_image, Image<uint8_t> right_image, in
     Func filteredLeft = prefilterXSobel(left, width, height, useGPU);
     Func filteredRight = prefilterXSobel(right, width, height, useGPU);
 
-    int x_tile_size = 16, y_tile_size = 16;
-    Func disp = findStereoCorrespondence(filteredLeft, filteredRight, SADWindowSize, minDisparity, numDisparities,
-        left_image.width(), left_image.height(), xmin, xmax, ymin, ymax, x_tile_size, y_tile_size, useGPU);
+    int x_tile_size, y_tile_size;
+    Func disp;
+    if (useGPU)
+    {
+        x_tile_size = 16, y_tile_size = 16;
+        disp = findStereoCorrespondence(filteredLeft, filteredRight, SADWindowSize, minDisparity, numDisparities,
+            left_image.width(), left_image.height(), xmin, xmax, ymin, ymax, x_tile_size, y_tile_size, useGPU);
+    }
+    else
+    {
+        x_tile_size = 64, y_tile_size = 32;
+        disp = findStereoCorrespondence(filteredLeft, filteredRight, SADWindowSize, minDisparity, numDisparities,
+            left_image.width(), left_image.height(), xmin, xmax, ymin, ymax, x_tile_size, y_tile_size, useGPU);
+    }
 
     int w = (xmax-xmin)/x_tile_size*x_tile_size+x_tile_size;
     int h = (ymax-ymin)/x_tile_size*x_tile_size+x_tile_size;
