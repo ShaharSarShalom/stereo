@@ -8,9 +8,8 @@ short FILTERED = -16;
 
 Func prefilterXSobel(Func image, int w, int h, bool schedule_GPU) {
     Var x("x"), y("y");
-    Func clamped("clamped"), gray("gray");
-    gray(x, y) = 0.2989f*image(x, y, 0) + 0.5870f*image(x, y, 1) + 0.1140f*image(x, y, 2);
-    clamped(x, y) = gray(clamp(x, 0, w-1), clamp(y, 0, h-1));
+    Func clamped("clamped");
+    clamped(x, y) = image(clamp(x, 0, w-1), clamp(y, 0, h-1));
 
     Func temp("temp"), xSobel("xSobel");
     temp(x, y) = clamped(x+1, y) - clamped(x-1, y);
@@ -20,7 +19,7 @@ Func prefilterXSobel(Func image, int w, int h, bool schedule_GPU) {
     if (!schedule_GPU)
     {
         Var xi("xi"), xo("xo"), yi("yi"), yo("yo");
-        xSobel.compute_root().tile(x, y, xo, yo, xi, yi, 64, 32).parallel(yo).parallel(xo);
+        xSobel.compute_root().tile(x, y, xo, yo, xi, yi, 64, 32).vectorize(xi, 8).parallel(yo).parallel(xo);
         temp.compute_at(xSobel, yi).vectorize(x, 8);
     }
     else
@@ -72,9 +71,11 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
         //     cast<ushort>(disp_left(x, y)[0]));
     }
     else{
-        vsum(d, xi, yi, xo, yo) = select(yi != 0, cast<ushort>(0), sum(diff_T(d, xi, rk, xo, yo)));
+        vsum(d, xi, yi, xo, yo) = undef<ushort>();
+        vsum(d, xi, 0, xo, yo) = sum(diff_T(d, xi, rk, xo, yo));
         vsum(d, xi, ryi, xo, yo) = vsum(d, xi, ryi-1, xo, yo) + diff_T(d, xi, ryi+win2, xo, yo) - diff_T(d, xi, ryi-win2-1, xo, yo);
-
+        // vsum(d, xi, yi, xo, yo) = diff_T(d, xi, yi, xo, yo);
+        // cSAD(d, xi, yi, xo, yo) = vsum(d, xi, yi, xo, yo);
         cSAD(d, xi, yi, xo, yo) = sum(vsum(d, xi+rk, yi, xo, yo));
     }
 
@@ -88,7 +89,6 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
             x>xmax-xmin || y>ymax-ymin,
             cast<ushort>(FILTERED),
             cast<ushort>(disp_left(x%x_tile_size, y%y_tile_size, x/x_tile_size, y/y_tile_size)[0]));
-
 
     int vector_width = 8;
 
@@ -140,7 +140,8 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 
         cSAD.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width);
         vsum.compute_at(disp_left, rd).reorder(xi,  yi, xo, yo, d).vectorize(xi, vector_width)
-            .update()                 .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
+            .update()                 .reorder(xi, xo, yo, d).vectorize(xi, vector_width);
+        vsum.update(1)                .reorder(xi, ryi, xo, yo, d).vectorize(xi, vector_width);
         Target target = get_jit_target_from_environment();
         target.set_feature(Target::SSE41);
         disp.compile_jit(target);
@@ -152,10 +153,20 @@ Func findStereoCorrespondence(Func left, Func right, int SADWindowSize, int minD
 
 Image<ushort> stereoBM(Image<uint8_t> left_image, Image<uint8_t> right_image, int SADWindowSize, int minDisparity,
               int numDisparities, int xmin, int xmax, int ymin, int ymax, bool useGPU) {
-    Var x("x"), y("y"), c("c");
+    Var x("x"), y("y");
+    Image<float> gray_left(left_image.width(), left_image.height());
+    Image<float> gray_right(left_image.width(), left_image.height());
+    for (int y = 0; y < left_image.height(); y++)
+    {
+        for (int x = 0; x < left_image.width(); x++)
+        {
+            gray_left(x, y) = (0.2989f*left_image(x, y, 0) + 0.5870f*left_image(x, y, 1) + 0.1140f*left_image(x, y, 2));
+            gray_right(x, y) = (0.2989f*right_image(x, y, 0) + 0.5870f*right_image(x, y, 1) + 0.1140f*right_image(x, y, 2));
+        }
+    }
     Func left("left"), right("right");
-    left(x, y, c) = left_image(x, y, c);
-    right(x, y, c) = right_image(x, y, c);
+    left(x, y) = gray_left(x, y);
+    right(x, y) = gray_right(x, y);
 
     int width = left_image.width();
     int height = left_image.height();

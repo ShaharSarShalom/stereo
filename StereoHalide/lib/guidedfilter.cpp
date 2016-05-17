@@ -1018,7 +1018,6 @@ void guidedFilterTest()
     }
 
     {
-        Image<float> im1 = Halide::Tools::load_image("../../trainingQ/Teddy/im1.png");
         Func left("left"), right("right");
         left(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
         right(x, y, c) = im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c);
