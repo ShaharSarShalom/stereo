@@ -132,7 +132,7 @@ int main(int argc, char **argv) {
     int ymin = win2;
     int ymax = height - win2 - 1;
 
-    Image<ushort> disp_image = stereoBM(img1, img2, SADWindowSize, 0, (numberOfDisparities-1)/16*16+16, xmin, xmax, ymin, ymax, false);
+    Image<ushort> disp_image = stereoBM(img1, img2, SADWindowSize, 0, (numberOfDisparities-1)/16*16+16, xmin, xmax, ymin, ymax, false, 3);
 
     Image<float> scaled_disp(disp_image.width(), disp_image.height());
     for (int y = 0; y < disp_image.height(); y++) {

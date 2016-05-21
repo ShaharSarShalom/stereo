@@ -9,7 +9,7 @@ float profile(Func myFunc, int w, int h, int n_times);
 float profile(Func myFunc, int w, int h, int c, int n_times);
 float profile(Func myFunc, Buffer buf, int n_times);
 Image<ushort> stereoBM(Image<uint8_t> left_image, Image<uint8_t> right_image, int SADWindowSize, int minDisparity,
-              int numDisparities, int xmin, int xmax, int ymin, int ymax, bool useGPU);
+              int numDisparities, int xmin, int xmax, int ymin, int ymax, bool useGPU, int schedule);
 Func guidedFilter_gray(Func I, Func p, int r, float epsilon);
 Func guidedFilter(Func I, Func p, int r, float epsilon);
 Func stereoGF(Func left, Func right, int width, int height, int r, float epsilon, int numDisparities, float alpha, float threshColor, float threshGrad);
