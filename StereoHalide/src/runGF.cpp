@@ -38,8 +38,8 @@ int main(int argc, char** argv ) {
     const char* im1_name = argv[2];
     const char* disp_image_name = argv[3];
 
-    Image<uint8_t> im0 = load_image(im0_name);
-    Image<uint8_t> im1 = load_image(im1_name);
+    Image<float> im0 = load_image(im0_name);
+    Image<float> im1 = load_image(im1_name);
 
     int numDisparities = 0;
     if( sscanf( argv[4], "%d", &numDisparities ) != 1 || numDisparities < 1)
@@ -50,10 +50,10 @@ int main(int argc, char** argv ) {
 
     Var x("x"), y("y"), c("c");
     Func left("left"), right("right");
-    left(x, y, c) = cast<int>(im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c));
-    right(x, y, c) = cast<int>(im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c));
+    left(x, y, c) = im0(clamp(x, 0, im0.width()-1), clamp(y, 0, im0.height()-1), c);
+    right(x, y, c) = im1(clamp(x, 0, im1.width()-1), clamp(y, 0, im1.height()-1), c);
 
-    Func disp = stereoGF_scheduled(left, right, im0.width(), im0.height(), 9, 0.0001, numDisparities, 0.9, 0.0028, 0.008);
+    Func disp = stereoGF_fast(left, right, im0.width(), im0.height(), 9, 0.0001, numDisparities, 0.9, 0.0028, 0.008);
     Image<int> disp_image = disp.realize(im0.width(), im1.height());
     Image<float> scaled_disp(disp_image.width(), disp_image.height());
 
